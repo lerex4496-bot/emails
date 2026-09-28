@@ -1,5 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
-import { MessageStatus, ConfidenceLevel } from '@mailtrace/shared';
+import { MessageStatus, ConfidenceLevel, TrackingEventType } from '@mailtrace/shared';
 import { getPrismaClient } from '@mailtrace/database';
 import { generateTrackingToken, generateReplyAlias } from '@mailtrace/tracking';
 
@@ -40,7 +40,6 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         data: {
           email: body.senderEmail || 'owner@mailtrace.io',
           passwordHash: '$2b$10$demo_hash_not_used_for_extension',
-          role: 'ADMIN',
         },
       });
     }
@@ -118,7 +117,7 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
           data: {
             messageId: msg.id,
             recipientId: r.recipientId,
-            openTrackingToken: r.openToken,
+            openTrackingToken: r.openToken || generateTrackingToken(),
             replyAliasToken: r.replyAliasToken,
           },
         });
@@ -207,7 +206,13 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         uniqueClicks += link.uniqueClicks;
       });
 
-      const openEvents = m.trackingEvents.filter((e) => e.type === 'OPEN' || e.type === 'CONFIRM_VIEW');
+      const openEvents = m.trackingEvents.filter(
+        (e) =>
+          e.type === TrackingEventType.TRACKING_RESOURCE_REQUESTED ||
+          e.type === TrackingEventType.POSSIBLE_EMAIL_OPEN ||
+          e.type === TrackingEventType.PROBABLE_EMAIL_OPEN ||
+          e.type === TrackingEventType.CONFIRMED_EMAIL_VIEW
+      );
       const latestEvent = m.trackingEvents[0];
 
       let status = 'SENT';
@@ -226,7 +231,7 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         status = 'OPENED';
         const bestEvent = openEvents[0];
         confidence = bestEvent.confidence;
-        if (bestEvent.type === 'CONFIRM_VIEW') {
+        if (bestEvent.type === TrackingEventType.CONFIRMED_EMAIL_VIEW) {
           eventLabel = 'Confirmed view';
         } else if (bestEvent.isProxy) {
           eventLabel = 'Proxy prefetch (Tracking request)';
