@@ -1,11 +1,23 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Shield,
   Download,
   Trash2,
   Lock,
   CheckCircle,
+  KeyRound,
+  Mail,
+  RefreshCw,
 } from 'lucide-react';
+
+interface AccountItem {
+  id: string;
+  emailAddress: string;
+  displayName: string;
+  provider: string;
+  isDefault: boolean;
+  createdAt: string;
+}
 
 export const SettingsPage: React.FC = () => {
   const [storeRawIp, setStoreRawIp] = useState(false);
@@ -13,10 +25,46 @@ export const SettingsPage: React.FC = () => {
   const [eventRetentionDays, setEventRetentionDays] = useState(90);
   const [saved, setSaved] = useState(false);
   const [wiping, setWiping] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [accounts, setAccounts] = useState<AccountItem[]>([]);
+
+  const fetchSettingsAndAccounts = async () => {
+    setLoading(true);
+    try {
+      const [settingsRes, accountsRes] = await Promise.all([
+        fetch('/api/v1/settings/privacy'),
+        fetch('/api/v1/accounts'),
+      ]);
+
+      if (settingsRes.ok) {
+        const data = await settingsRes.json();
+        if (data.settings) {
+          setStoreRawIp(Boolean(data.settings.storeRawIp));
+          setRetainCoarseGeo(Boolean(data.settings.retainCoarseGeo));
+          setEventRetentionDays(Number(data.settings.eventRetentionDays) || 90);
+        }
+      }
+
+      if (accountsRes.ok) {
+        const accData = await accountsRes.json();
+        if (Array.isArray(accData.accounts)) {
+          setAccounts(accData.accounts);
+        }
+      }
+    } catch {
+      // Local fallback
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSettingsAndAccounts();
+  }, []);
 
   const handleSavePrivacy = async () => {
     try {
-      await fetch('/api/v1/settings/privacy', {
+      const res = await fetch('/api/v1/settings/privacy', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -25,10 +73,11 @@ export const SettingsPage: React.FC = () => {
           eventRetentionDays,
         }),
       });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
+      if (res.ok) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2500);
+      }
     } catch {
-      // Local demo mode
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     }
@@ -39,15 +88,23 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handleWipeHistory = async () => {
-    if (!confirm('Are you sure you want to permanently erase all tracking events and click history? This cannot be undone.')) {
+    if (
+      !confirm(
+        'Are you sure you want to permanently erase all tracking events and click history? This action is irreversible.'
+      )
+    ) {
       return;
     }
     setWiping(true);
     try {
-      await fetch('/api/v1/settings/data/history', { method: 'DELETE' });
-      alert('Tracking history erased successfully.');
+      const res = await fetch('/api/v1/settings/data/history', { method: 'DELETE' });
+      if (res.ok) {
+        alert('All tracking history erased successfully.');
+      } else {
+        alert('Failed to erase tracking history.');
+      }
     } catch {
-      alert('Failed to erase history.');
+      alert('Error occurred while attempting to wipe data.');
     } finally {
       setWiping(false);
     }
@@ -55,13 +112,75 @@ export const SettingsPage: React.FC = () => {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto text-xs">
-      <div>
-        <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
-          Privacy & System Settings
-        </h2>
-        <p className="text-slate-500">
-          Configure telemetry data collection, cryptographic protections, and retention rules.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
+            Privacy & System Settings
+          </h2>
+          <p className="text-slate-500 dark:text-slate-400">
+            Configure telemetry data collection, cryptographic protections, retention policies, and connected dispatch accounts.
+          </p>
+        </div>
+        <button
+          onClick={fetchSettingsAndAccounts}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition shadow-sm self-start sm:self-auto"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
+      </div>
+
+      {/* Connected Accounts Card */}
+      <div className="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+          <div className="flex items-center gap-2">
+            <KeyRound className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            <h3 className="font-semibold text-slate-900 dark:text-slate-100 text-sm">
+              Connected Sending Accounts
+            </h3>
+          </div>
+          <span className="text-[11px] text-slate-400 font-medium">
+            {accounts.length} Active Provider{accounts.length === 1 ? '' : 's'}
+          </span>
+        </div>
+
+        {accounts.length === 0 ? (
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-800 text-center text-slate-400">
+            No sending accounts registered. Use your default SMTP configuration or add an account.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {accounts.map((acc) => (
+              <div
+                key={acc.id}
+                className="flex items-center justify-between p-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-950/80 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                    <Mail className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                      <span>{acc.displayName || acc.emailAddress}</span>
+                      {acc.isDefault && (
+                        <span className="text-[10px] px-2 py-0.2 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-medium border border-emerald-200 dark:border-emerald-800">
+                          Default
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-slate-400 font-mono">{acc.emailAddress}</span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="px-2 py-1 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-mono text-[10px] font-semibold">
+                    {acc.provider}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Privacy Settings Card */}
@@ -79,7 +198,7 @@ export const SettingsPage: React.FC = () => {
               <span className="font-medium text-slate-800 dark:text-slate-200 block">
                 Store Raw IP Addresses
               </span>
-              <span className="text-[11px] text-slate-500 block max-w-md">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 block max-w-md">
                 When disabled (recommended), client IP addresses are dropped immediately and never stored in the database.
               </span>
             </div>
@@ -99,7 +218,7 @@ export const SettingsPage: React.FC = () => {
               <span className="font-medium text-slate-800 dark:text-slate-200 block">
                 Retain Coarse Network Diagnostics
               </span>
-              <span className="text-[11px] text-slate-500 block max-w-md">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 block max-w-md">
                 Stores non-identifying network metadata (ASN and general country) to detect automated cloud security scanners and image proxies.
               </span>
             </div>
@@ -119,8 +238,8 @@ export const SettingsPage: React.FC = () => {
               <span className="font-medium text-slate-800 dark:text-slate-200 block">
                 Event Retention Period
               </span>
-              <span className="text-[11px] text-slate-500 block max-w-md">
-                Automatically purge tracking events older than the specified duration.
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 block max-w-md">
+                Automatically purge tracking events older than the specified duration to honor recipient privacy rights.
               </span>
             </div>
             <select
@@ -163,13 +282,13 @@ export const SettingsPage: React.FC = () => {
           </h3>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 text-slate-600 dark:text-slate-400">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-slate-600 dark:text-slate-400">
           <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-800">
             <span className="font-semibold text-slate-800 dark:text-slate-200 block">
               AES-256-GCM Token Encryption
             </span>
-            <span className="text-[11px] text-slate-500">
-              Active. Provider secrets and OAuth credentials are authenticated and encrypted at rest.
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
+              Active. Provider secrets and OAuth credentials are authenticated and encrypted at rest with PBKDF2 derived keys.
             </span>
           </div>
 
@@ -177,8 +296,8 @@ export const SettingsPage: React.FC = () => {
             <span className="font-semibold text-slate-800 dark:text-slate-200 block">
               Open-Redirect Defense
             </span>
-            <span className="text-[11px] text-slate-500">
-              Active. Redirection destinations are strictly verified by database lookup.
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
+              Active. Redirection destinations are strictly verified by database lookup. Arbitrary URL redirects are rejected with HTTP 404.
             </span>
           </div>
         </div>
@@ -190,36 +309,36 @@ export const SettingsPage: React.FC = () => {
           Data Ownership & Compliance
         </h3>
 
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <span className="font-medium text-slate-800 dark:text-slate-200 block">
               Export Tracking History
             </span>
-            <span className="text-[11px] text-slate-500">
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
               Download all messages, timestamps, and evidence logs as a structured JSON file.
             </span>
           </div>
           <button
             onClick={handleExportData}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition self-start sm:self-auto"
           >
             <Download className="w-3.5 h-3.5" /> Export JSON
           </button>
         </div>
 
-        <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-3 border-t border-slate-100 dark:border-slate-800">
           <div>
             <span className="font-medium text-rose-600 dark:text-rose-400 block">
               Permanently Wipe History
             </span>
-            <span className="text-[11px] text-slate-500">
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
               Deletes all tracking events, click records, and reply associations from the database.
             </span>
           </div>
           <button
             onClick={handleWipeHistory}
             disabled={wiping}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-medium transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-medium transition self-start sm:self-auto"
           >
             <Trash2 className="w-3.5 h-3.5" /> {wiping ? 'Wiping...' : 'Wipe Data'}
           </button>

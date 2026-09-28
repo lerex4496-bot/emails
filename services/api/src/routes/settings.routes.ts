@@ -5,6 +5,21 @@ import { getPrismaClient } from '@mailtrace/database';
 export const settingsRoutes: FastifyPluginAsync = async (fastify) => {
   const prisma = getPrismaClient();
 
+  fastify.get('/api/v1/settings/privacy', async () => {
+    const firstUser = await prisma.user.findFirst();
+    const defaultSettings = {
+      storeRawIp: false,
+      retainCoarseGeo: true,
+      eventRetentionDays: 90,
+    };
+
+    if (!firstUser || !firstUser.privacySettings) {
+      return { settings: defaultSettings };
+    }
+
+    return { settings: firstUser.privacySettings };
+  });
+
   fastify.put('/api/v1/settings/privacy', async (request, reply) => {
     const parseResult = privacySettingsSchema.safeParse(request.body);
     if (!parseResult.success) {

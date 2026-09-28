@@ -2,11 +2,9 @@ import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard,
   Mail,
-  Users,
   Activity,
   Link2,
   Reply,
-  KeyRound,
   Settings,
   ActivitySquare,
   BookOpen,
@@ -19,11 +17,9 @@ import {
 export type NavTab =
   | 'dashboard'
   | 'messages'
-  | 'contacts'
   | 'activity'
   | 'links'
   | 'replies'
-  | 'accounts'
   | 'settings'
   | 'diagnostics'
   | 'docs';
@@ -62,11 +58,9 @@ export const Shell: React.FC<ShellProps> = ({
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'messages', label: 'Messages', icon: Mail },
-    { id: 'contacts', label: 'Contacts', icon: Users },
     { id: 'activity', label: 'Activity', icon: Activity },
     { id: 'links', label: 'Links', icon: Link2 },
     { id: 'replies', label: 'Replies', icon: Reply },
-    { id: 'accounts', label: 'Accounts', icon: KeyRound },
     { id: 'settings', label: 'Settings', icon: Settings },
     { id: 'diagnostics', label: 'Diagnostics', icon: ActivitySquare },
     { id: 'docs', label: 'Documentation', icon: BookOpen },

@@ -194,6 +194,22 @@ async function main() {
     },
   });
 
+  // Event 1c: Inbound Reply from Bob Investor
+  await prisma.replyEvent.create({
+    data: {
+      messageId: msg1.id,
+      providerReplyId: '<01HV998X72TEST@smtp.mailtrace.io>',
+      replyThreadId: 'thread_bob_acme_q3',
+      replyTimestamp: new Date(Date.now() - 3600 * 1000 * 1),
+      timeToReplySeconds: 10800, // 3 hours
+    },
+  });
+
+  await prisma.messageRecipient.update({
+    where: { id: mrBob.id },
+    data: { replyReceived: true },
+  });
+
   // 5. Message 2: Security Assessment (Sent to Carol - Scanned immediately by Corporate Gateway)
   const openTokenCarol = 'tok_open_carol_12893719283719283719283';
   const msg2 = await prisma.message.create({

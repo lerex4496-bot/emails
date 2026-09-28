@@ -31,19 +31,62 @@ vi.mock('@mailtrace/database', () => {
           confidence: data.confidence,
           timestamp: data.timestamp,
         })),
+        findMany: vi.fn(async () => [
+          {
+            id: 'evt-1',
+            type: 'TRACKING_RESOURCE_REQUESTED',
+            confidence: 'MEDIUM',
+            classification: 'POSSIBLE_HUMAN',
+            timestamp: new Date(),
+            source: 'remote_pixel',
+            message: { id: 'msg-1', subject: 'Test Subject', sentAt: new Date() },
+          },
+        ]),
         count: vi.fn(async () => 18),
         deleteMany: vi.fn(async () => ({ count: 5 })),
+      },
+      trackedLink: {
+        findMany: vi.fn(async () => [
+          {
+            id: 'link-1',
+            token: 'tok-1',
+            originalUrl: 'https://example.com',
+            clickCount: 5,
+            uniqueClicks: 3,
+            message: { id: 'msg-1', subject: 'Test Subject', sentAt: new Date() },
+            clickEvents: [],
+          },
+        ]),
       },
       clickEvent: {
         count: vi.fn(async () => 7),
         deleteMany: vi.fn(async () => ({ count: 2 })),
       },
       replyEvent: {
+        findMany: vi.fn(async () => [
+          {
+            id: 'reply-1',
+            timeToReplySeconds: 3600,
+            replyTimestamp: new Date(),
+            message: { id: 'msg-1', subject: 'Test Subject', sentAt: new Date(), recipients: [] },
+          },
+        ]),
         count: vi.fn(async () => 3),
         deleteMany: vi.fn(async () => ({ count: 1 })),
       },
       deliveryEvent: {
         deleteMany: vi.fn(async () => ({ count: 0 })),
+      },
+      account: {
+        findMany: vi.fn(async () => [
+          {
+            id: 'acc-1',
+            emailAddress: 'owner@mailtrace.io',
+            displayName: 'Default Account',
+            provider: 'SMTP',
+            isDefault: true,
+          },
+        ]),
       },
       user: {
         findFirst: vi.fn(async () => ({

@@ -3,7 +3,11 @@ import { Shell, NavTab } from './components/layout/Shell.js';
 import { Dashboard } from './pages/Dashboard.js';
 import { MessagesPage } from './pages/Messages.js';
 import { MessageDetails } from './pages/MessageDetails.js';
+import { ActivityPage } from './pages/Activity.js';
+import { LinksPage } from './pages/Links.js';
+import { RepliesPage } from './pages/Replies.js';
 import { SettingsPage } from './pages/Settings.js';
+import { DiagnosticsPage } from './pages/Diagnostics.js';
 import { DocumentationPage } from './pages/Documentation.js';
 import { SendMessageModal } from './components/composer/SendMessageModal.js';
 
@@ -37,32 +41,36 @@ export const App: React.FC = () => {
       ) : (
         <>
           {activeTab === 'dashboard' && (
-            <Dashboard onSelectMessage={handleSelectMessage} />
+            <Dashboard
+              onSelectMessage={handleSelectMessage}
+              onOpenComposer={() => setIsComposerOpen(true)}
+            />
           )}
 
           {activeTab === 'messages' && (
-            <MessagesPage onSelectMessage={handleSelectMessage} />
+            <MessagesPage
+              onSelectMessage={handleSelectMessage}
+              onOpenComposer={() => setIsComposerOpen(true)}
+            />
+          )}
+
+          {activeTab === 'activity' && (
+            <ActivityPage onSelectMessage={handleSelectMessage} />
+          )}
+
+          {activeTab === 'links' && (
+            <LinksPage onSelectMessage={handleSelectMessage} />
+          )}
+
+          {activeTab === 'replies' && (
+            <RepliesPage onSelectMessage={handleSelectMessage} />
           )}
 
           {activeTab === 'settings' && <SettingsPage />}
 
-          {activeTab === 'docs' && <DocumentationPage />}
+          {activeTab === 'diagnostics' && <DiagnosticsPage />}
 
-          {(activeTab === 'contacts' ||
-            activeTab === 'activity' ||
-            activeTab === 'links' ||
-            activeTab === 'replies' ||
-            activeTab === 'accounts' ||
-            activeTab === 'diagnostics') && (
-            <div className="p-8 text-center border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900">
-              <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200 capitalize">
-                {activeTab} Management
-              </h3>
-              <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-                Real-time synchronized views for {activeTab}. Connected accounts and active streams are operating normally.
-              </p>
-            </div>
-          )}
+          {activeTab === 'docs' && <DocumentationPage />}
         </>
       )}
 
