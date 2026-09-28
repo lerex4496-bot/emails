@@ -1,0 +1,22 @@
+{
+  "name": "@mailtrace/database",
+  "version": "1.0.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "prisma:generate": "prisma generate",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mailtrace/shared": "workspace:*",
+    "@prisma/client": "^5.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "prisma": "^5.22.0",
+    "typescript": "^5.8.2",
+    "vitest": "^2.1.8"
+  }
+}

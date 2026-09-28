@@ -1,0 +1,21 @@
+{
+  "name": "mailtrace-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production-grade, privacy-conscious personal email tracking platform",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "dev": "turbo run dev --parallel",
+    "clean": "turbo run clean"
+  },
+  "devDependencies": {
+    "turbo": "^2.4.4",
+    "typescript": "^5.8.2"
+  }
+}

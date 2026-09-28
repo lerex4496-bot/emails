@@ -1,0 +1,29 @@
+{
+    email admin@example.com
+}
+
+{$APP_DOMAIN:localhost} {
+    # Reverse proxy tracking routes directly to API
+    handle /t/* {
+        reverse_proxy api:3000
+    }
+
+    # Reverse proxy REST API routes to API
+    handle /api/* {
+        reverse_proxy api:3000
+    }
+
+    # Reverse proxy health checks
+    handle /health {
+        reverse_proxy api:3000
+    }
+
+    handle /ready {
+        reverse_proxy api:3000
+    }
+
+    # Frontend web application
+    handle /* {
+        reverse_proxy web:80
+    }
+}

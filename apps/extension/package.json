@@ -1,0 +1,16 @@
+{
+  "name": "@mailtrace/extension",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.8.2",
+    "vitest": "^2.1.8"
+  }
+}

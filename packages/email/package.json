@@ -1,0 +1,22 @@
+{
+  "name": "@mailtrace/email",
+  "version": "1.0.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mailtrace/shared": "workspace:*",
+    "@mailtrace/tracking": "workspace:*",
+    "nodemailer": "^6.9.16"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/nodemailer": "^6.4.17",
+    "typescript": "^5.8.2",
+    "vitest": "^2.1.8"
+  }
+}

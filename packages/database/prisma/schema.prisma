@@ -1,0 +1,285 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum AccountProvider {
+  GMAIL
+  MICROSOFT
+  SMTP
+}
+
+enum MessageStatus {
+  DRAFT
+  PENDING
+  SENT
+  PROVIDER_ACCEPTED
+  DELIVERED
+  BOUNCED
+  FAILED
+}
+
+enum TokenType {
+  OPEN_TRACKING
+  LINK_TRACKING
+  REPLY_ALIAS
+}
+
+enum TrackingEventType {
+  TRACKING_RESOURCE_REQUESTED
+  POSSIBLE_EMAIL_OPEN
+  PROBABLE_EMAIL_OPEN
+  CONFIRMED_EMAIL_VIEW
+  LINK_CLICKED
+  REPLY_RECEIVED
+  DELIVERY_STATUS_UPDATED
+}
+
+enum ConfidenceLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CONFIRMED
+}
+
+enum Classification {
+  UNDETERMINED
+  LIKELY_AUTOMATED
+  POSSIBLE_HUMAN
+  PROBABLE_HUMAN
+  CONFIRMED_FIRST_PARTY
+}
+
+model User {
+  id               String          @id @default(uuid())
+  email            String          @unique
+  passwordHash     String?
+  displayName      String?
+  privacySettings  Json            @default("{\"storeRawIp\":false,\"retainCoarseGeo\":true,\"eventRetentionDays\":90}")
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  accounts         Account[]
+  messages         Message[]
+  deviceSessions   DeviceSession[]
+  auditLogs        AuditLog[]
+
+  @@map("users")
+}
+
+model Account {
+  id                     String          @id @default(uuid())
+  userId                 String
+  user                   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider               AccountProvider
+  emailAddress           String
+  displayName            String?
+  encryptedCredentials   String
+  providerAccountId      String?
+  isDefault              Boolean         @default(false)
+  syncCursor             String?
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+  messages               Message[]
+
+  @@unique([userId, emailAddress, provider])
+  @@map("accounts")
+}
+
+model Message {
+  id                   String              @id @default(uuid())
+  userId               String
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId            String
+  account              Account             @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  subject              String
+  threadId             String?
+  providerMessageId    String?             @unique
+  internetMessageId    String?             @unique
+  status               MessageStatus       @default(DRAFT)
+  sentAt               DateTime?
+  deliveredAt          DateTime?
+  firstActivityAt      DateTime?
+  lastActivityAt       DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  recipients           MessageRecipient[]
+  trackedLinks         TrackedLink[]
+  trackingEvents       TrackingEvent[]
+  replyEvents          ReplyEvent[]
+  deliveryEvents       DeliveryEvent[]
+
+  @@index([userId, sentAt])
+  @@index([threadId])
+  @@index([internetMessageId])
+  @@map("messages")
+}
+
+model Recipient {
+  id                String              @id @default(uuid())
+  email             String              @unique
+  name              String?
+  company           String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  messageRecipients MessageRecipient[]
+
+  @@index([email])
+  @@map("recipients")
+}
+
+model MessageRecipient {
+  id                   String          @id @default(uuid())
+  messageId            String
+  message              Message         @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  recipientId          String
+  recipient            Recipient       @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  openTrackingToken    String          @unique
+  replyAliasToken      String?         @unique
+  openResourceCount    Int             @default(0)
+  probableOpenCount    Int             @default(0)
+  confirmedViewCount   Int             @default(0)
+  totalClicks          Int             @default(0)
+  uniqueClicks         Int             @default(0)
+  replyReceived        Boolean         @default(false)
+  deliveryStatus       MessageStatus   @default(PENDING)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  trackingEvents       TrackingEvent[]
+
+  @@unique([messageId, recipientId])
+  @@index([openTrackingToken])
+  @@map("message_recipients")
+}
+
+model TrackingToken {
+  id             String       @id @default(uuid())
+  token          String       @unique
+  type           TokenType
+  messageId      String
+  recipientId    String?
+  linkId         String?
+  expiresAt      DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([token, type])
+  @@map("tracking_tokens")
+}
+
+model TrackedLink {
+  id             String          @id @default(uuid())
+  messageId      String
+  message        Message         @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  token          String          @unique
+  originalUrl    String
+  clickCount     Int             @default(0)
+  uniqueClicks   Int             @default(0)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  clickEvents    ClickEvent[]
+
+  @@index([token])
+  @@map("tracked_links")
+}
+
+model TrackingEvent {
+  id                   String              @id @default(uuid())
+  messageId            String
+  message              Message             @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageRecipientId   String?
+  messageRecipient     MessageRecipient?   @relation(fields: [messageRecipientId], references: [id], onDelete: SetNull)
+  type                 TrackingEventType
+  confidence           ConfidenceLevel     @default(LOW)
+  classification       Classification      @default(UNDETERMINED)
+  timestamp            DateTime            @default(now())
+  source               String
+  userAgent            String?
+  isProxy              Boolean             @default(false)
+  proxyType            String?
+  isBurstDuplicate     Boolean             @default(false)
+  rawHeaders           Json?
+  coarseLocation       Json?
+  metadata             Json?
+
+  clickEvent           ClickEvent?
+
+  @@index([messageId, timestamp])
+  @@index([type])
+  @@index([timestamp])
+  @@map("tracking_events")
+}
+
+model ClickEvent {
+  id                 String          @id @default(uuid())
+  trackingEventId    String          @unique
+  trackingEvent      TrackingEvent   @relation(fields: [trackingEventId], references: [id], onDelete: Cascade)
+  trackedLinkId      String
+  trackedLink        TrackedLink     @relation(fields: [trackedLinkId], references: [id], onDelete: Cascade)
+  isUnique           Boolean         @default(true)
+  timestamp          DateTime        @default(now())
+
+  @@index([trackedLinkId, timestamp])
+  @@map("click_events")
+}
+
+model ReplyEvent {
+  id                 String          @id @default(uuid())
+  messageId          String
+  message            Message         @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  providerReplyId    String?
+  replyThreadId      String?
+  replyTimestamp     DateTime        @default(now())
+  timeToReplySeconds Int?
+  createdAt          DateTime        @default(now())
+
+  @@index([messageId])
+  @@map("reply_events")
+}
+
+model DeliveryEvent {
+  id                 String          @id @default(uuid())
+  messageId          String
+  message            Message         @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  status             MessageStatus
+  reason             String?
+  rawPayload         Json?
+  timestamp          DateTime        @default(now())
+
+  @@index([messageId, timestamp])
+  @@map("delivery_events")
+}
+
+model DeviceSession {
+  id                 String          @id @default(uuid())
+  userId             String
+  user               User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform           String
+  deviceIdentifier   String
+  publicKey          String?
+  lastSyncAt         DateTime        @default(now())
+  createdAt          DateTime        @default(now())
+
+  @@unique([userId, deviceIdentifier])
+  @@map("device_sessions")
+}
+
+model AuditLog {
+  id                 String          @id @default(uuid())
+  userId             String?
+  user               User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action             String
+  resourceType       String
+  resourceId         String?
+  ipAddress          String?
+  userAgent          String?
+  timestamp          DateTime        @default(now())
+
+  @@index([userId, timestamp])
+  @@map("audit_logs")
+}
