@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { MessageTable, MessageListItem } from '../components/messages/MessageTable.js';
 import { Search, Filter, RefreshCw, AlertCircle, Mail, Plus } from 'lucide-react';
+import { apiUrl } from '../utils/api.js';
 
 interface MessagesPageProps {
   onSelectMessage: (id: string) => void;
@@ -22,7 +23,7 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/v1/messages');
+      const res = await fetch(apiUrl('/api/v1/messages'));
       if (!res.ok) {
         throw new Error(`Failed to load messages (${res.status})`);
       }

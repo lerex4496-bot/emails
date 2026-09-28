@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { EventBadge } from '../components/common/EventBadge.js';
 import { ConfidenceBadge } from '../components/common/ConfidenceBadge.js';
 import { formatEvidence } from '../utils/evidence.js';
+import { apiUrl } from '../utils/api.js';
 import {
   Activity as ActivityIcon,
   Search,
@@ -64,7 +65,7 @@ export const ActivityPage: React.FC<ActivityPageProps> = ({ onSelectMessage }) =
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/v1/events');
+      const res = await fetch(apiUrl('/api/v1/events'));
       if (!res.ok) {
         throw new Error(`Failed to load activity stream (${res.status})`);
       }

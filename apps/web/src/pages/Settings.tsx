@@ -9,6 +9,7 @@ import {
   Mail,
   RefreshCw,
 } from 'lucide-react';
+import { apiUrl } from '../utils/api.js';
 
 interface AccountItem {
   id: string;
@@ -32,8 +33,8 @@ export const SettingsPage: React.FC = () => {
     setLoading(true);
     try {
       const [settingsRes, accountsRes] = await Promise.all([
-        fetch('/api/v1/settings/privacy'),
-        fetch('/api/v1/accounts'),
+        fetch(apiUrl('/api/v1/settings/privacy')),
+        fetch(apiUrl('/api/v1/accounts')),
       ]);
 
       if (settingsRes.ok) {
@@ -64,7 +65,7 @@ export const SettingsPage: React.FC = () => {
 
   const handleSavePrivacy = async () => {
     try {
-      const res = await fetch('/api/v1/settings/privacy', {
+      const res = await fetch(apiUrl('/api/v1/settings/privacy'), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -84,7 +85,7 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handleExportData = () => {
-    window.open('/api/v1/settings/data/export', '_blank');
+    window.open(apiUrl('/api/v1/settings/data/export'), '_blank');
   };
 
   const handleWipeHistory = async () => {
@@ -97,7 +98,7 @@ export const SettingsPage: React.FC = () => {
     }
     setWiping(true);
     try {
-      const res = await fetch('/api/v1/settings/data/history', { method: 'DELETE' });
+      const res = await fetch(apiUrl('/api/v1/settings/data/history'), { method: 'DELETE' });
       if (res.ok) {
         alert('All tracking history erased successfully.');
       } else {

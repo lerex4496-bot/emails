@@ -9,6 +9,7 @@ import {
   AlertCircle,
   CheckCircle2,
 } from 'lucide-react';
+import { apiUrl } from '../utils/api.js';
 
 interface ReplyRecord {
   id: string;
@@ -43,7 +44,7 @@ export const RepliesPage: React.FC<RepliesPageProps> = ({ onSelectMessage }) => 
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/v1/replies');
+      const res = await fetch(apiUrl('/api/v1/replies'));
       if (!res.ok) {
         throw new Error(`Failed to load replies (${res.status})`);
       }

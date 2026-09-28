@@ -11,6 +11,7 @@ import {
   Mail,
   AlertCircle,
 } from 'lucide-react';
+import { apiUrl } from '../utils/api.js';
 
 interface ClickEventSummary {
   id: string;
@@ -51,7 +52,7 @@ export const LinksPage: React.FC<LinksPageProps> = ({ onSelectMessage }) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/v1/links');
+      const res = await fetch(apiUrl('/api/v1/links'));
       if (!res.ok) {
         throw new Error(`Failed to load tracked links (${res.status})`);
       }

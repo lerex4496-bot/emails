@@ -15,6 +15,7 @@ import {
   Clock,
   Link2,
 } from 'lucide-react';
+import { apiUrl } from '../utils/api.js';
 
 interface TrackedLinkItem {
   id: string;
@@ -58,7 +59,7 @@ export const MessageDetails: React.FC<MessageDetailsProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/v1/messages/${messageId}`);
+      const res = await fetch(apiUrl(`/api/v1/messages/${messageId}`));
       if (!res.ok) {
         throw new Error(`Failed to load message details (${res.status})`);
       }
@@ -205,7 +206,7 @@ export const MessageDetails: React.FC<MessageDetailsProps> = ({
     if (!message) return;
     setConfirmingView(true);
     try {
-      const res = await fetch('/api/v1/events/confirm-view', {
+      const res = await fetch(apiUrl('/api/v1/events/confirm-view'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

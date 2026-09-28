@@ -14,6 +14,7 @@ import {
 import { EventBadge } from '../components/common/EventBadge.js';
 import { ConfidenceBadge } from '../components/common/ConfidenceBadge.js';
 import { formatEvidence } from '../utils/evidence.js';
+import { apiUrl } from '../utils/api.js';
 
 interface HealthData {
   status: string;
@@ -56,9 +57,9 @@ export const DiagnosticsPage: React.FC = () => {
     setError(null);
     try {
       const [healthRes, readyRes, metricsRes] = await Promise.all([
-        fetch('/health'),
-        fetch('/ready'),
-        fetch('/metrics'),
+        fetch(apiUrl('/health')),
+        fetch(apiUrl('/ready')),
+        fetch(apiUrl('/metrics')),
       ]);
 
       if (healthRes.ok) setHealth(await healthRes.json());

@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Plus,
 } from 'lucide-react';
+import { apiUrl } from '../utils/api.js';
 
 interface DashboardMetrics {
   messagesSent: number;
@@ -53,8 +54,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
     setLoading(true);
     try {
       const [metricRes, msgRes] = await Promise.all([
-        fetch('/api/v1/dashboard/metrics'),
-        fetch('/api/v1/messages'),
+        fetch(apiUrl('/api/v1/dashboard/metrics')),
+        fetch(apiUrl('/api/v1/messages')),
       ]);
 
       if (metricRes.ok) {
