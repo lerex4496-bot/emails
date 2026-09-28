@@ -12,6 +12,7 @@ import { messageRoutes } from './routes/messages.routes.js';
 import { dashboardRoutes } from './routes/dashboard.routes.js';
 import { eventRoutes } from './routes/events.routes.js';
 import { settingsRoutes } from './routes/settings.routes.js';
+import { extensionRoutes } from './routes/extension.routes.js';
 
 export interface AppOptions {
   logger?: boolean | object;
@@ -59,6 +60,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   await app.register(dashboardRoutes);
   await app.register(eventRoutes);
   await app.register(settingsRoutes);
+  await app.register(extensionRoutes);
 
   return app;
 }

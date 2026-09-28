@@ -1,0 +1,259 @@
+import { FastifyPluginAsync } from 'fastify';
+import { MessageStatus, ConfidenceLevel } from '@mailtrace/shared';
+import { getPrismaClient } from '@mailtrace/database';
+import { generateTrackingToken, generateReplyAlias } from '@mailtrace/tracking';
+
+export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
+  const prisma = getPrismaClient();
+  const trackingBaseUrl = (process.env.TRACKING_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+  const trackingDomain = process.env.TRACKING_DOMAIN || 'track.mailtrace.io';
+
+  /**
+   * Extension endpoint: Prepare tracking tokens and pixel for an email
+   * composed directly inside Gmail / Outlook webmail.
+   */
+  fastify.post('/api/v1/extension/prepare-tracking', async (request, reply) => {
+    const body = (request.body || {}) as {
+      to?: Array<{ email: string; name?: string }>;
+      subject?: string;
+      links?: string[];
+      senderEmail?: string;
+      enableOpenTracking?: boolean;
+      enableClickTracking?: boolean;
+      enableReplyTracking?: boolean;
+    };
+
+    const recipientList = Array.isArray(body.to) && body.to.length > 0
+      ? body.to
+      : [{ email: 'recipient@example.com', name: 'Recipient' }];
+
+    const subject = body.subject || '(No Subject)';
+    const links = Array.isArray(body.links) ? body.links : [];
+    const enableOpenTracking = body.enableOpenTracking !== false;
+    const enableClickTracking = body.enableClickTracking !== false;
+    const enableReplyTracking = body.enableReplyTracking !== false;
+
+    // 1. Resolve or create account / user for the sender
+    let user = await prisma.user.findFirst();
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          email: body.senderEmail || 'owner@mailtrace.io',
+          passwordHash: '$2b$10$demo_hash_not_used_for_extension',
+          role: 'ADMIN',
+        },
+      });
+    }
+
+    let account = await prisma.account.findFirst({
+      where: { userId: user.id },
+    });
+
+    if (!account) {
+      account = await prisma.account.create({
+        data: {
+          userId: user.id,
+          provider: 'SMTP',
+          emailAddress: body.senderEmail || user.email,
+          displayName: 'Gmail Extension Sender',
+          encryptedCredentials: 'extension_direct_send',
+          isDefault: true,
+        },
+      });
+    }
+
+    // 2. Prepare tokens
+    const openToken = enableOpenTracking ? generateTrackingToken() : undefined;
+    const replyToken = enableReplyTracking ? generateTrackingToken() : undefined;
+    const replyAlias = replyToken ? generateReplyAlias(trackingDomain, replyToken) : undefined;
+
+    const linkTokenMap: Record<string, string> = {};
+    if (enableClickTracking) {
+      for (const link of links) {
+        if (typeof link === 'string' && link.startsWith('http')) {
+          linkTokenMap[link] = generateTrackingToken();
+        }
+      }
+    }
+
+    // 3. Persist Message, Recipients, and TrackedLinks
+    const createdMessage = await prisma.$transaction(async (tx) => {
+      const recipientIds: { recipientId: string; openToken?: string; replyAliasToken?: string }[] = [];
+
+      for (const item of recipientList) {
+        let recipient = await tx.recipient.findUnique({
+          where: { email: item.email },
+        });
+
+        if (!recipient) {
+          recipient = await tx.recipient.create({
+            data: {
+              email: item.email,
+              name: item.name || item.email.split('@')[0],
+            },
+          });
+        }
+
+        recipientIds.push({
+          recipientId: recipient.id,
+          openToken,
+          replyAliasToken: replyToken,
+        });
+      }
+
+      // Create message in SENT status (sent natively via Gmail)
+      const msg = await tx.message.create({
+        data: {
+          userId: user!.id,
+          accountId: account!.id,
+          subject,
+          status: MessageStatus.SENT,
+          sentAt: new Date(),
+        },
+      });
+
+      // Create message_recipients
+      for (const r of recipientIds) {
+        await tx.messageRecipient.create({
+          data: {
+            messageId: msg.id,
+            recipientId: r.recipientId,
+            openTrackingToken: r.openToken,
+            replyAliasToken: r.replyAliasToken,
+          },
+        });
+      }
+
+      // Create tracked_links
+      for (const [originalUrl, token] of Object.entries(linkTokenMap)) {
+        await tx.trackedLink.create({
+          data: {
+            messageId: msg.id,
+            token,
+            originalUrl,
+          },
+        });
+      }
+
+      return msg;
+    });
+
+    const pixelUrl = openToken ? `${trackingBaseUrl}/t/open/${openToken}.png` : null;
+    const pixelHtml = pixelUrl
+      ? `<img src="${pixelUrl}" width="1" height="1" alt="" style="display:none;width:0;height:0;max-height:0;visibility:hidden;border:0;" data-mailtrace-pixel="true" />`
+      : '';
+
+    const trackedLinks = Object.entries(linkTokenMap).map(([originalUrl, token]) => ({
+      originalUrl,
+      token,
+      trackedUrl: `${trackingBaseUrl}/t/click/${token}`,
+    }));
+
+    return reply.status(201).send({
+      success: true,
+      messageId: createdMessage.id,
+      openToken,
+      pixelUrl,
+      pixelHtml,
+      replyAlias,
+      trackedLinks,
+    });
+  });
+
+  /**
+   * Extension endpoint: Fetch lightweight tracking status map for Gmail Sent / Inbox rows.
+   */
+  fastify.get('/api/v1/extension/tracking-status', async (_request, reply) => {
+    const messages = await prisma.message.findMany({
+      take: 100,
+      orderBy: { sentAt: 'desc' },
+      include: {
+        recipients: {
+          include: {
+            recipient: true,
+            trackingEvents: {
+              orderBy: { timestamp: 'desc' },
+              take: 5,
+            },
+          },
+        },
+        trackedLinks: {
+          include: {
+            clickEvents: {
+              orderBy: { timestamp: 'desc' },
+              take: 5,
+            },
+          },
+        },
+        trackingEvents: {
+          orderBy: { timestamp: 'desc' },
+          take: 10,
+        },
+        replyEvents: {
+          orderBy: { replyTimestamp: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    const statusList = messages.map((m) => {
+      const primaryRecipient = m.recipients[0]?.recipient?.email || '';
+      const replyReceived = (m.replyEvents && m.replyEvents.length > 0) || m.recipients.some((r) => r.replyReceived);
+
+      let totalClicks = 0;
+      let uniqueClicks = 0;
+      m.trackedLinks.forEach((link) => {
+        totalClicks += link.clickCount;
+        uniqueClicks += link.uniqueClicks;
+      });
+
+      const openEvents = m.trackingEvents.filter((e) => e.type === 'OPEN' || e.type === 'CONFIRM_VIEW');
+      const latestEvent = m.trackingEvents[0];
+
+      let status = 'SENT';
+      let confidence = 'LOW';
+      let eventLabel = 'Delivered';
+
+      if (replyReceived) {
+        status = 'REPLIED';
+        confidence = 'CONFIRMED';
+        eventLabel = 'Reply received';
+      } else if (totalClicks > 0) {
+        status = 'CLICKED';
+        confidence = 'CONFIRMED';
+        eventLabel = `${uniqueClicks} unique click${uniqueClicks > 1 ? 's' : ''}`;
+      } else if (openEvents.length > 0) {
+        status = 'OPENED';
+        const bestEvent = openEvents[0];
+        confidence = bestEvent.confidence;
+        if (bestEvent.type === 'CONFIRM_VIEW') {
+          eventLabel = 'Confirmed view';
+        } else if (bestEvent.isProxy) {
+          eventLabel = 'Proxy prefetch (Tracking request)';
+        } else {
+          eventLabel = 'Probable open';
+        }
+      }
+
+      return {
+        messageId: m.id,
+        subject: m.subject,
+        recipientEmail: primaryRecipient,
+        sentAt: m.sentAt,
+        status,
+        confidence,
+        eventLabel,
+        totalOpens: openEvents.length,
+        totalClicks,
+        uniqueClicks,
+        replyReceived,
+        lastActivity: latestEvent ? latestEvent.timestamp : m.sentAt,
+      };
+    });
+
+    return reply.send({
+      success: true,
+      statuses: statusList,
+    });
+  });
+};
