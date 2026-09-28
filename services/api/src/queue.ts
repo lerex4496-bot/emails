@@ -12,7 +12,6 @@ export function getRedisClient(): Redis | null {
   try {
     redisClient = new Redis(redisUrl, {
       maxRetriesPerRequest: null,
-      lazyConnect: true,
       enableOfflineQueue: false,
     });
     redisClient.on('error', () => {

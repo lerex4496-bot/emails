@@ -27,6 +27,9 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
     const redis = getRedisClient();
     if (redis) {
       try {
+        if (redis.status === 'wait') {
+          await redis.connect();
+        }
         await redis.ping();
       } catch {
         redisStatus = 'degraded';

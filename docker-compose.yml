@@ -1,0 +1,80 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mailtrace-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mailtrace}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mailtrace_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-mailtrace}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mailtrace} -d ${POSTGRES_DB:-mailtrace}"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: mailtrace-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: infrastructure/Dockerfile.api
+    container_name: mailtrace-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      HOST: "0.0.0.0"
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mailtrace}:${POSTGRES_PASSWORD:-mailtrace_secure_password}@postgres:5432/${POSTGRES_DB:-mailtrace}?schema=public
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_key_at_least_32_characters_long}
+      TRACKING_BASE_URL: ${TRACKING_BASE_URL:-http://localhost:3000}
+    ports:
+      - "3000:3000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: infrastructure/Dockerfile.worker
+    container_name: mailtrace-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mailtrace}:${POSTGRES_PASSWORD:-mailtrace_secure_password}@postgres:5432/${POSTGRES_DB:-mailtrace}?schema=public
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+
+volumes:
+  postgres_data:
+  redis_data:

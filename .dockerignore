@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+dist
+**/dist
+.turbo
+**/.turbo
+.git
+**/.git
+*.log
+.env
+.env.*
+apps/android
+apps/windows
+coverage

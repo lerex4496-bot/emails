@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { buildApp } from '../app.js';
 import { FastifyInstance } from 'fastify';
-import { getPrismaClient } from '@mailtrace/database';
 
 vi.mock('@mailtrace/database', () => {
   const mockTrackedLink = {
@@ -30,7 +29,7 @@ vi.mock('@mailtrace/database', () => {
   };
 });
 
-describe('Fastify Tracking & Health Endpoints', () => {
+describe('Tracking & Health Endpoints', () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
@@ -52,9 +51,36 @@ describe('Fastify Tracking & Health Endpoints', () => {
     const json = JSON.parse(res.payload);
     expect(json.status).toBe('ok');
     expect(json.service).toBe('mailtrace-api');
+    expect(typeof json.uptime).toBe('number');
   });
 
-  it('GET /t/open/:token returns 200 OK, 1x1 image/png and strict no-cache headers', async () => {
+  it('GET /ready returns readiness checks for database and redis', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/ready',
+    });
+
+    expect(res.statusCode).toBe(200);
+    const json = JSON.parse(res.payload);
+    expect(json.status).toBe('ready');
+    expect(json.checks).toBeDefined();
+    expect(json.checks.database).toBe('healthy');
+  });
+
+  it('GET /metrics returns system memory and platform telemetry', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/metrics',
+    });
+
+    expect(res.statusCode).toBe(200);
+    const json = JSON.parse(res.payload);
+    expect(typeof json.processMemoryMb).toBe('number');
+    expect(json.nodeVersion).toBeDefined();
+    expect(json.platform).toBeDefined();
+  });
+
+  it('GET /t/open/:token returns 200 OK, 68-byte 1x1 image/png and strict no-cache headers', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/t/open/sample-open-token-xyz',
@@ -67,12 +93,13 @@ describe('Fastify Tracking & Health Endpoints', () => {
     expect(res.headers['content-type']).toBe('image/png');
     expect(res.headers['cache-control']).toContain('no-store');
     expect(res.headers['cache-control']).toContain('no-cache');
+    expect(res.headers['cache-control']).toContain('must-revalidate');
     expect(res.headers['expires']).toBe('0');
-    // Transparent PNG byte size
+    // 68-byte transparent PNG
     expect(res.rawPayload.length).toBe(68);
   });
 
-  it('GET /t/click/:token with registered token redirects 302 to original URL', async () => {
+  it('GET /t/click/:token with registered token redirects 302 strictly to original URL', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/t/click/valid-click-token-123',
@@ -89,5 +116,7 @@ describe('Fastify Tracking & Health Endpoints', () => {
     });
 
     expect(res.statusCode).toBe(404);
+    const json = JSON.parse(res.payload);
+    expect(json.error).toBe('Not Found');
   });
 });
