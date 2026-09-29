@@ -215,9 +215,9 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
       );
       const latestEvent = m.trackingEvents[0];
 
-      let status = 'SENT';
+      let status = m.status === MessageStatus.DELIVERED || m.status === MessageStatus.PROVIDER_ACCEPTED ? 'DELIVERED' : 'SENT';
       let confidence = 'LOW';
-      let eventLabel = 'Delivered';
+      let eventLabel = status === 'DELIVERED' ? 'Delivered to inbox' : 'Sent';
 
       if (replyReceived) {
         status = 'REPLIED';

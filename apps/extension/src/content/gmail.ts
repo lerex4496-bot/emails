@@ -79,22 +79,27 @@ function injectStyles(): void {
     }
     .mailtrace-badge-sent {
       background: #f1f5f9;
+      color: #94a3b8;
+      border: 1px solid #cbd5e1;
+    }
+    .mailtrace-badge-delivered {
+      background: #f8fafc;
       color: #64748b;
       border: 1px solid #cbd5e1;
     }
     .mailtrace-badge-opened {
       background: #ecfdf5;
-      color: #059669;
-      border: 1px solid #6ee7b7;
+      color: #16a34a;
+      border: 1px solid #86efac;
     }
     .mailtrace-badge-clicked {
       background: #eff6ff;
-      color: #2563eb;
+      color: #16a34a;
       border: 1px solid #93c5fd;
     }
     .mailtrace-badge-replied {
       background: #faf5ff;
-      color: #7c3aed;
+      color: #16a34a;
       border: 1px solid #c4b5fd;
     }
     .mailtrace-tooltip {
@@ -391,30 +396,34 @@ async function updateRowBadges(): Promise<void> {
     const badge = document.createElement('span');
     badge.className = 'mailtrace-status-badge mailtrace-tooltip';
 
-    let iconText = '✓';
+    let badgeHtml = '<span style="color:#94a3b8;font-weight:700;">✓</span>';
     let badgeClass = 'mailtrace-badge-sent';
-    let tooltipText = `${match.subject} — Sent`;
+    let tooltipText = `${match.subject} — Sent • Waiting for recipient`;
 
-    if (match.replyReceived) {
-      iconText = '✓✓ ↩';
+    if (match.replyReceived || match.status === 'REPLIED') {
+      badgeHtml = '<span style="color:#16a34a;font-weight:800;">✓✓</span> <span style="color:#7c3aed;font-weight:900;">↩</span>';
       badgeClass = 'mailtrace-badge-replied';
       tooltipText = `Reply received! • ${match.eventLabel}`;
-    } else if (match.totalClicks > 0) {
-      iconText = '✓✓ ↗';
+    } else if (match.totalClicks > 0 || match.status === 'CLICKED') {
+      badgeHtml = '<span style="color:#16a34a;font-weight:800;">✓✓</span> <span style="color:#2563eb;font-weight:900;">↗</span>';
       badgeClass = 'mailtrace-badge-clicked';
       tooltipText = `Link clicked (${match.uniqueClicks} unique) • ${match.eventLabel}`;
     } else if (match.status === 'OPENED' || match.totalOpens > 0) {
-      iconText = '✓✓';
+      badgeHtml = '<span style="color:#16a34a;font-weight:800;">✓✓</span>';
       badgeClass = 'mailtrace-badge-opened';
       tooltipText = `${match.eventLabel} (${match.confidence} confidence)`;
+    } else if (match.status === 'DELIVERED') {
+      badgeHtml = '<span style="color:#64748b;font-weight:800;">✓✓</span>';
+      badgeClass = 'mailtrace-badge-delivered';
+      tooltipText = `Delivered to recipient • Not yet opened`;
     } else {
-      iconText = '✓';
+      badgeHtml = '<span style="color:#94a3b8;font-weight:700;">✓</span>';
       badgeClass = 'mailtrace-badge-sent';
-      tooltipText = `Delivered • Waiting for recipient`;
+      tooltipText = `Sent • Waiting for recipient`;
     }
 
     badge.className += ` ${badgeClass}`;
-    badge.textContent = iconText;
+    badge.innerHTML = badgeHtml;
     badge.setAttribute('data-tooltip', `${tooltipText} (Click to open Dashboard)`);
 
     // Click badge to view on Dashboard
