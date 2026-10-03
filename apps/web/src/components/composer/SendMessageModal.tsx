@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Send, ShieldAlert, Sparkles } from 'lucide-react';
+import { apiUrl } from '../../utils/api.js';
 
 interface SendMessageModalProps {
   isOpen: boolean;
@@ -44,7 +45,7 @@ export const SendMessageModal: React.FC<SendMessageModalProps> = ({
         enableReplyTracking,
       };
 
-      const res = await fetch('/api/v1/messages/send', {
+      const res = await fetch(apiUrl('/api/v1/messages/send'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
