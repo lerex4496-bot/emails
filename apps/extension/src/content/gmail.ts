@@ -16,14 +16,13 @@ let API_BASE_URL = 'https://mailtrace-api-7bx5.onrender.com';
 let DASHBOARD_BASE_URL = 'https://emails-web-mu.vercel.app';
 let TRACKING_ENABLED_BY_DEFAULT = true;
 
-// Load user-configured URLs from Chrome storage if available
 if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
   chrome.storage.sync.get(['mailtrace_api_url', 'mailtrace_dashboard_url', 'mailtrace_enabled'], (items) => {
-    // Ignore stale localhost:3000 default if user hasn't explicitly customized
+    // Ignore stale localhost defaults if user hasn't explicitly customized
     if (items.mailtrace_api_url && items.mailtrace_api_url !== 'http://localhost:3000') {
       API_BASE_URL = items.mailtrace_api_url.replace(/\/$/, '');
     }
-    if (items.mailtrace_dashboard_url) {
+    if (items.mailtrace_dashboard_url && items.mailtrace_dashboard_url !== 'http://localhost:5173') {
       DASHBOARD_BASE_URL = items.mailtrace_dashboard_url.replace(/\/$/, '');
     }
     if (typeof items.mailtrace_enabled === 'boolean') {
@@ -67,23 +66,27 @@ function injectStyles(): void {
       transform: translateY(-0.5px);
     }
     .mailtrace-status-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 3px;
-      font-size: 11px;
-      font-weight: 700;
-      padding: 1px 6px;
-      border-radius: 4px;
-      margin-right: 6px;
-      cursor: pointer;
-      line-height: 1.3;
-      transition: opacity 0.15s ease;
-      vertical-align: middle;
-      font-family: system-ui, -apple-system, sans-serif;
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 3px !important;
+      font-size: 11px !important;
+      font-weight: 700 !important;
+      padding: 1px 6px !important;
+      border-radius: 4px !important;
+      margin-right: 6px !important;
+      cursor: pointer !important;
+      line-height: 1.3 !important;
+      transition: all 0.15s ease !important;
+      vertical-align: middle !important;
+      font-family: system-ui, -apple-system, sans-serif !important;
+      white-space: nowrap !important;
+      flex-shrink: 0 !important;
+      box-sizing: border-box !important;
+      z-index: 5 !important;
     }
     .mailtrace-status-badge:hover {
-      opacity: 0.8;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+      opacity: 0.85 !important;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.15) !important;
     }
     .mailtrace-thread-badge {
       font-size: 12px !important;
@@ -96,20 +99,21 @@ function injectStyles(): void {
       gap: 4px !important;
     }
     .mailtrace-badge-label {
-      font-size: 11px;
-      font-weight: 600;
+      font-size: 11px !important;
+      font-weight: 700 !important;
+      margin-left: 2px !important;
     }
     .mailtrace-header-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 3px;
-      padding: 1px 6px;
-      margin-left: 8px;
-      border-radius: 4px;
-      font-size: 11px;
-      font-weight: 600;
-      cursor: pointer;
-      vertical-align: middle;
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 3px !important;
+      padding: 1px 6px !important;
+      margin-left: 8px !important;
+      border-radius: 4px !important;
+      font-size: 11px !important;
+      font-weight: 600 !important;
+      cursor: pointer !important;
+      vertical-align: middle !important;
     }
     .mailtrace-thread-banner {
       display: flex;
@@ -169,29 +173,29 @@ function injectStyles(): void {
       background: #1d4ed8;
     }
     .mailtrace-badge-sent {
-      background: #f1f5f9;
-      color: #94a3b8;
-      border: 1px solid #cbd5e1;
+      background: #f1f5f9 !important;
+      color: #64748b !important;
+      border: 1px solid #cbd5e1 !important;
     }
     .mailtrace-badge-delivered {
-      background: #f8fafc;
-      color: #64748b;
-      border: 1px solid #cbd5e1;
+      background: #f8fafc !important;
+      color: #475569 !important;
+      border: 1px solid #94a3b8 !important;
     }
     .mailtrace-badge-opened {
-      background: #ecfdf5;
-      color: #16a34a;
-      border: 1px solid #86efac;
+      background: #dcfce7 !important;
+      color: #15803d !important;
+      border: 1px solid #86efac !important;
     }
     .mailtrace-badge-clicked {
-      background: #eff6ff;
-      color: #16a34a;
-      border: 1px solid #93c5fd;
+      background: #eff6ff !important;
+      color: #1d4ed8 !important;
+      border: 1px solid #93c5fd !important;
     }
     .mailtrace-badge-replied {
-      background: #faf5ff;
-      color: #16a34a;
-      border: 1px solid #c4b5fd;
+      background: #faf5ff !important;
+      color: #7c3aed !important;
+      border: 1px solid #c4b5fd !important;
     }
     .mailtrace-tooltip {
       position: relative;
@@ -243,7 +247,7 @@ let lastStatusFetch = 0;
 
 async function fetchTrackingStatuses(): Promise<StatusItem[]> {
   const now = Date.now();
-  if (now - lastStatusFetch < 15000 && cachedStatuses.length > 0) {
+  if (now - lastStatusFetch < 5000 && cachedStatuses.length > 0) {
     return cachedStatuses;
   }
   try {
@@ -253,10 +257,13 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
       if (Array.isArray(data.statuses)) {
         cachedStatuses = data.statuses;
         lastStatusFetch = now;
+        console.log(`[MailTrace] Synchronized ${cachedStatuses.length} tracked messages from ${API_BASE_URL}`);
       }
+    } else {
+      console.warn(`[MailTrace] Status fetch HTTP ${res.status}`);
     }
-  } catch {
-    // API not reachable
+  } catch (err) {
+    console.warn(`[MailTrace] Cannot reach tracking API at ${API_BASE_URL}:`, err);
   }
   return cachedStatuses;
 }
@@ -489,37 +496,64 @@ function getBadgeConfig(match: StatusItem): BadgeConfig {
   };
 }
 
-// Find status match based on subject and participant text
+// Robust multi-pass status matcher
 function findStatusMatch(
   subjectText: string,
   participantText: string,
+  rowFullText: string,
   statuses: StatusItem[]
 ): StatusItem | undefined {
   const normSubject = (subjectText || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
   const normParticipant = (participantText || '').toLowerCase().trim();
+  const normRow = (rowFullText || '').toLowerCase().trim();
 
-  return statuses.find((s) => {
-    const cleanSubject = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
-    const recipientEmail = (s.recipientEmail || '').toLowerCase().trim();
-    const recipientPrefix = recipientEmail.split('@')[0] || '';
+  // Pass 1: Recipient AND Subject match
+  for (const s of statuses) {
+    const cleanSubj = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
+    const recipEmail = (s.recipientEmail || '').toLowerCase().trim();
+    const recipPrefix = recipEmail.split('@')[0] || '';
 
-    // Check recipient match
-    const recipientMatch = recipientEmail && (
-      normParticipant.includes(recipientEmail) ||
-      (recipientPrefix.length > 2 && normParticipant.includes(recipientPrefix))
+    const recipMatch = recipEmail && (
+      normParticipant.includes(recipEmail) ||
+      normRow.includes(recipEmail) ||
+      (recipPrefix.length >= 3 && (normParticipant.includes(recipPrefix) || normRow.includes(recipPrefix)))
     );
 
-    // Check subject match
-    const subjectMatch = cleanSubject && cleanSubject !== '(no subject)'
-      ? (normSubject.includes(cleanSubject) || cleanSubject.includes(normSubject))
-      : false;
+    const isNoSubj = !cleanSubj || cleanSubj === '(no subject)';
+    const subjMatch = isNoSubj
+      ? (normRow.includes('(no subject)') || normRow.includes('no subject') || normSubject.includes('no subject'))
+      : (cleanSubj.length > 0 && (normSubject.includes(cleanSubj) || normRow.includes(cleanSubj)));
 
-    if (!cleanSubject || cleanSubject === '(no subject)') {
-      return recipientMatch;
+    if (recipMatch && subjMatch) {
+      return s;
     }
+  }
 
-    return subjectMatch || recipientMatch;
-  });
+  // Pass 2: Distinctive Subject match (when subject is not '(no subject)')
+  for (const s of statuses) {
+    const cleanSubj = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
+    if (cleanSubj && cleanSubj !== '(no subject)' && cleanSubj.length >= 2) {
+      if (normSubject.includes(cleanSubj) || normRow.includes(cleanSubj)) {
+        return s;
+      }
+    }
+  }
+
+  // Pass 3: Match by Recipient + (no subject) indicator
+  for (const s of statuses) {
+    const cleanSubj = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
+    const recipEmail = (s.recipientEmail || '').toLowerCase().trim();
+    const recipPrefix = recipEmail.split('@')[0] || '';
+    const isNoSubj = !cleanSubj || cleanSubj === '(no subject)';
+
+    if (isNoSubj && (normRow.includes('no subject') || normRow.includes('(no subject)'))) {
+      if (recipEmail && (normParticipant.includes(recipEmail) || normRow.includes(recipPrefix))) {
+        return s;
+      }
+    }
+  }
+
+  return undefined;
 }
 
 // 2. Inject Status Badges in Gmail Message Rows (Sent / Inbox)
@@ -528,21 +562,24 @@ function updateRowBadges(statuses: StatusItem[]): void {
   rows.forEach((row) => {
     if (row.querySelector('.mailtrace-status-badge')) return;
 
-    // Extract row subject text and snippet
-    const subjectEl = row.querySelector('.bog, .bqe, span[data-thread-id]');
+    // Search subject ONLY within the subject cell (td.a4W or .xY.a4W) to avoid picking up recipient .bqe
+    const subjectCell = row.querySelector('td.a4W, td.xY.a4W, .xT');
+    const subjectEl = subjectCell?.querySelector('.bog, .bqe, span[data-thread-id], span');
     const subjectText = subjectEl?.textContent?.trim() || '';
 
-    // Extract row recipient / sender text
-    const participantEl = row.querySelector('.yX, .yW, .yP, span[email]');
+    // Search recipient ONLY within recipient cell (td.yX, .yW)
+    const participantEl = row.querySelector('td.yX, .yW, .yP, span[email]');
     const participantText = participantEl?.getAttribute('email') || participantEl?.textContent?.trim() || '';
 
-    const match = findStatusMatch(subjectText, participantText, statuses);
+    const rowFullText = row.textContent?.trim() || '';
+
+    const match = findStatusMatch(subjectText, participantText, rowFullText, statuses);
     if (!match) return;
 
     const cfg = getBadgeConfig(match);
     const badge = document.createElement('span');
     badge.className = `mailtrace-status-badge mailtrace-tooltip ${cfg.cssClass}`;
-    badge.innerHTML = cfg.iconHtml;
+    badge.innerHTML = `${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span>`;
     badge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
 
     badge.addEventListener('click', (e) => {
@@ -551,14 +588,17 @@ function updateRowBadges(statuses: StatusItem[]): void {
       window.open(`${DASHBOARD_BASE_URL}/messages/${match.messageId}`, '_blank');
     });
 
-    if (subjectEl && subjectEl.parentElement) {
-      subjectEl.parentElement.insertBefore(badge, subjectEl);
+    // Insert badge right in front of the subject line
+    const insertTarget = subjectCell?.querySelector('.xT, .y6') || subjectCell;
+    if (insertTarget) {
+      insertTarget.insertBefore(badge, insertTarget.firstChild);
     } else {
-      const container = row.querySelector('.y6, .xY, td.xY');
+      const container = row.querySelector('.y6, .xY, td.xY, td.yX');
       if (container) {
         container.prepend(badge);
       }
     }
+    console.log('[MailTrace] Injected row badge for:', match.subject, '->', cfg.label);
   });
 }
 
@@ -580,7 +620,7 @@ function updateThreadBadges(statuses: StatusItem[]): void {
       participantText += ' ' + (el.getAttribute('email') || el.textContent || '');
     });
 
-    const match = findStatusMatch(subjectText, participantText, statuses);
+    const match = findStatusMatch(subjectText, participantText, subjectText + ' ' + participantText, statuses);
     if (!match) return;
 
     const cfg = getBadgeConfig(match);
@@ -644,7 +684,7 @@ function updateThreadBadges(statuses: StatusItem[]): void {
     const toText = toEl?.getAttribute('email') || toEl?.textContent?.trim() || '';
 
     const mainSubject = document.querySelector('h2.hP, div[role="main"] h2')?.textContent?.trim() || '';
-    const match = findStatusMatch(mainSubject, toText, statuses);
+    const match = findStatusMatch(mainSubject, toText, mainSubject + ' ' + toText, statuses);
     if (!match) return;
 
     const cfg = getBadgeConfig(match);

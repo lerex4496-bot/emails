@@ -27,11 +27,15 @@ function showAlert(text, isError = false) {
 function loadSettings() {
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
     chrome.storage.sync.get(['mailtrace_api_url', 'mailtrace_dashboard_url', 'mailtrace_enabled'], (items) => {
-      // Use Render API if not set or if still set to the old localhost:3000 default
+      // Use Render API and Vercel dashboard if not set or if still set to the old localhost defaults
       const savedApi = items.mailtrace_api_url;
       const effectiveApi = (!savedApi || savedApi === 'http://localhost:3000') ? DEFAULT_API_URL : savedApi;
       apiUrlInput.value = effectiveApi;
-      dashboardUrlInput.value = items.mailtrace_dashboard_url || DEFAULT_DASHBOARD_URL;
+
+      const savedDash = items.mailtrace_dashboard_url;
+      const effectiveDash = (!savedDash || savedDash === 'http://localhost:5173') ? DEFAULT_DASHBOARD_URL : savedDash;
+      dashboardUrlInput.value = effectiveDash;
+
       autoTrackCheckbox.checked = typeof items.mailtrace_enabled === 'boolean' ? items.mailtrace_enabled : true;
       testConnection(apiUrlInput.value);
     });

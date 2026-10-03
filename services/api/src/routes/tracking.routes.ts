@@ -14,7 +14,7 @@ export const trackingRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{ Params: { token: string } }>(
     '/t/open/:token',
     async (request, reply) => {
-      const { token } = request.params;
+      const token = (request.params.token || '').replace(/\.png$/i, '');
       const headers = request.headers as Record<string, string>;
       const userAgent = headers['user-agent'] || undefined;
 
@@ -50,7 +50,7 @@ export const trackingRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{ Params: { token: string } }>(
     '/t/click/:token',
     async (request, reply) => {
-      const { token } = request.params;
+      const token = (request.params.token || '').replace(/\.html$/i, '');
       const headers = request.headers as Record<string, string>;
       const userAgent = headers['user-agent'] || undefined;
 

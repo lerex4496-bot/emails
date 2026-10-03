@@ -12,7 +12,7 @@ import { SMTPProvider } from '@mailtrace/email';
 export const messageRoutes: FastifyPluginAsync = async (fastify) => {
   const prisma = getPrismaClient();
   const encryptionKey = process.env.ENCRYPTION_KEY || 'default-mailtrace-dev-secret-key-32b';
-  const trackingBaseUrl = process.env.TRACKING_BASE_URL || 'http://localhost:3000';
+  const trackingBaseUrl = (process.env.TRACKING_BASE_URL || process.env.RENDER_EXTERNAL_URL || 'https://mailtrace-api-7bx5.onrender.com').replace(/\/$/, '');
   const trackingDomain = process.env.TRACKING_DOMAIN || 'track.mailtrace.io';
 
   /**

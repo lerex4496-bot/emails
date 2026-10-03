@@ -5,7 +5,7 @@ import { generateTrackingToken, generateReplyAlias } from '@mailtrace/tracking';
 
 export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
   const prisma = getPrismaClient();
-  const trackingBaseUrl = (process.env.TRACKING_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+  const defaultTrackingBaseUrl = (process.env.TRACKING_BASE_URL || process.env.RENDER_EXTERNAL_URL || 'https://mailtrace-api-7bx5.onrender.com').replace(/\/$/, '');
   const trackingDomain = process.env.TRACKING_DOMAIN || 'track.mailtrace.io';
 
   /**
@@ -13,6 +13,11 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
    * composed directly inside Gmail / Outlook webmail.
    */
   fastify.post('/api/v1/extension/prepare-tracking', async (request, reply) => {
+    const proto = (request.headers['x-forwarded-proto'] as string) || request.protocol || 'https';
+    const host = (request.headers['x-forwarded-host'] as string) || request.headers.host;
+    const requestBase = host && !host.includes('localhost') && !host.includes('127.0.0.1') ? `${proto}://${host}` : defaultTrackingBaseUrl;
+    const trackingBaseUrl = (process.env.TRACKING_BASE_URL || process.env.RENDER_EXTERNAL_URL || requestBase).replace(/\/$/, '');
+
     const body = (request.body || {}) as {
       to?: Array<{ email: string; name?: string }>;
       subject?: string;
