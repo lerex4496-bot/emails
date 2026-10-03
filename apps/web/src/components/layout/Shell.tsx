@@ -13,6 +13,7 @@ import {
   PlusCircle,
   ShieldCheck,
 } from 'lucide-react';
+import { API_BASE_URL } from '../../utils/api.js';
 
 export type NavTab =
   | 'dashboard'
@@ -155,8 +156,8 @@ export const Shell: React.FC<ShellProps> = ({
           </div>
           <div className="flex items-center gap-3 text-xs">
             <div className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2.5 py-1 rounded-full border border-slate-200 dark:border-slate-700 flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-              <span>Self-Hosted Local Mode</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>{API_BASE_URL.includes('onrender.com') ? 'Render Cloud Connected' : 'Self-Hosted Local Mode'}</span>
             </div>
           </div>
         </header>

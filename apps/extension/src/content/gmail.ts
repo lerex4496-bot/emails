@@ -11,17 +11,25 @@
 
 console.log('[MailTrace] Gmail Webmail Companion active.');
 
-// Default configuration fallbacks
-let API_BASE_URL = 'http://localhost:3000';
-let DASHBOARD_BASE_URL = 'http://localhost:5173';
+// Default configuration fallbacks (Pointing directly to live Render cloud API and Vercel web)
+let API_BASE_URL = 'https://mailtrace-api-7bx5.onrender.com';
+let DASHBOARD_BASE_URL = 'https://emails-web-mu.vercel.app';
 let TRACKING_ENABLED_BY_DEFAULT = true;
 
 // Load user-configured URLs from Chrome storage if available
 if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
   chrome.storage.sync.get(['mailtrace_api_url', 'mailtrace_dashboard_url', 'mailtrace_enabled'], (items) => {
-    if (items.mailtrace_api_url) API_BASE_URL = items.mailtrace_api_url.replace(/\/$/, '');
-    if (items.mailtrace_dashboard_url) DASHBOARD_BASE_URL = items.mailtrace_dashboard_url.replace(/\/$/, '');
-    if (typeof items.mailtrace_enabled === 'boolean') TRACKING_ENABLED_BY_DEFAULT = items.mailtrace_enabled;
+    // Ignore stale localhost:3000 default if user hasn't explicitly customized
+    if (items.mailtrace_api_url && items.mailtrace_api_url !== 'http://localhost:3000') {
+      API_BASE_URL = items.mailtrace_api_url.replace(/\/$/, '');
+    }
+    if (items.mailtrace_dashboard_url) {
+      DASHBOARD_BASE_URL = items.mailtrace_dashboard_url.replace(/\/$/, '');
+    }
+    if (typeof items.mailtrace_enabled === 'boolean') {
+      TRACKING_ENABLED_BY_DEFAULT = items.mailtrace_enabled;
+    }
+    refreshBadges();
   });
 }
 
@@ -76,6 +84,89 @@ function injectStyles(): void {
     .mailtrace-status-badge:hover {
       opacity: 0.8;
       box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+    .mailtrace-thread-badge {
+      font-size: 12px !important;
+      padding: 2px 8px !important;
+      margin-right: 8px !important;
+      border-radius: 12px !important;
+      vertical-align: middle !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 4px !important;
+    }
+    .mailtrace-badge-label {
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .mailtrace-header-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 1px 6px;
+      margin-left: 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      vertical-align: middle;
+    }
+    .mailtrace-thread-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 14px;
+      margin: 10px 0 14px 0;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-left: 4px solid #3b82f6;
+      border-radius: 8px;
+      font-size: 12px;
+      font-family: 'Google Sans', Roboto, sans-serif;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+    .mailtrace-thread-banner.opened {
+      border-left-color: #16a34a;
+      background: #f0fdf4;
+    }
+    .mailtrace-thread-banner.clicked {
+      border-left-color: #2563eb;
+      background: #eff6ff;
+    }
+    .mailtrace-banner-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .mailtrace-badge-pill {
+      font-size: 11px;
+      font-weight: 700;
+      background: #1e293b;
+      color: #fff;
+      padding: 2px 7px;
+      border-radius: 4px;
+      letter-spacing: 0.3px;
+    }
+    .mailtrace-banner-text {
+      color: #475569;
+      font-size: 12px;
+    }
+    .mailtrace-banner-btn {
+      padding: 4px 10px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s ease;
+    }
+    .mailtrace-banner-btn:hover {
+      background: #1d4ed8;
     }
     .mailtrace-badge-sent {
       background: #f1f5f9;
@@ -349,11 +440,90 @@ async function injectTrackingIntoCompose(dialog: Element): Promise<void> {
   }
 }
 
-// 2. Inject Status Badges in Gmail Message Rows (Sent / Inbox)
-async function updateRowBadges(): Promise<void> {
-  const statuses = await fetchTrackingStatuses();
-  if (!statuses || statuses.length === 0) return;
+// Centralized status badge appearance configuration
+interface BadgeConfig {
+  iconHtml: string;
+  label: string;
+  cssClass: string;
+  tooltip: string;
+}
 
+function getBadgeConfig(match: StatusItem): BadgeConfig {
+  if (match.replyReceived || match.status === 'REPLIED') {
+    return {
+      iconHtml: '<span style="color:#16a34a;font-weight:800;">✓✓</span> <span style="color:#7c3aed;font-weight:900;">↩</span>',
+      label: 'Replied',
+      cssClass: 'mailtrace-badge-replied',
+      tooltip: `Reply received! • ${match.eventLabel}`,
+    };
+  }
+  if (match.totalClicks > 0 || match.status === 'CLICKED') {
+    return {
+      iconHtml: '<span style="color:#16a34a;font-weight:800;">✓✓</span> <span style="color:#2563eb;font-weight:900;">↗</span>',
+      label: 'Clicked',
+      cssClass: 'mailtrace-badge-clicked',
+      tooltip: `Link clicked (${match.uniqueClicks} unique) • ${match.eventLabel}`,
+    };
+  }
+  if (match.status === 'OPENED' || match.totalOpens > 0) {
+    return {
+      iconHtml: '<span style="color:#16a34a;font-weight:800;">✓✓</span>',
+      label: 'Opened',
+      cssClass: 'mailtrace-badge-opened',
+      tooltip: `${match.eventLabel} (${match.confidence} confidence)`,
+    };
+  }
+  if (match.status === 'DELIVERED') {
+    return {
+      iconHtml: '<span style="color:#64748b;font-weight:800;">✓✓</span>',
+      label: 'Delivered',
+      cssClass: 'mailtrace-badge-delivered',
+      tooltip: 'Delivered to recipient • Not yet opened',
+    };
+  }
+  return {
+    iconHtml: '<span style="color:#94a3b8;font-weight:700;">✓</span>',
+    label: 'Sent',
+    cssClass: 'mailtrace-badge-sent',
+    tooltip: 'Sent • Waiting for recipient',
+  };
+}
+
+// Find status match based on subject and participant text
+function findStatusMatch(
+  subjectText: string,
+  participantText: string,
+  statuses: StatusItem[]
+): StatusItem | undefined {
+  const normSubject = (subjectText || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
+  const normParticipant = (participantText || '').toLowerCase().trim();
+
+  return statuses.find((s) => {
+    const cleanSubject = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
+    const recipientEmail = (s.recipientEmail || '').toLowerCase().trim();
+    const recipientPrefix = recipientEmail.split('@')[0] || '';
+
+    // Check recipient match
+    const recipientMatch = recipientEmail && (
+      normParticipant.includes(recipientEmail) ||
+      (recipientPrefix.length > 2 && normParticipant.includes(recipientPrefix))
+    );
+
+    // Check subject match
+    const subjectMatch = cleanSubject && cleanSubject !== '(no subject)'
+      ? (normSubject.includes(cleanSubject) || cleanSubject.includes(normSubject))
+      : false;
+
+    if (!cleanSubject || cleanSubject === '(no subject)') {
+      return recipientMatch;
+    }
+
+    return subjectMatch || recipientMatch;
+  });
+}
+
+// 2. Inject Status Badges in Gmail Message Rows (Sent / Inbox)
+function updateRowBadges(statuses: StatusItem[]): void {
   const rows = document.querySelectorAll('tr.zA, tr[role="row"]');
   rows.forEach((row) => {
     if (row.querySelector('.mailtrace-status-badge')) return;
@@ -363,77 +533,24 @@ async function updateRowBadges(): Promise<void> {
     const subjectText = subjectEl?.textContent?.trim() || '';
 
     // Extract row recipient / sender text
-    const participantEl = row.querySelector('.yX, .yW, span[email]');
-    const participantText = participantEl?.textContent?.trim() || '';
+    const participantEl = row.querySelector('.yX, .yW, .yP, span[email]');
+    const participantText = participantEl?.getAttribute('email') || participantEl?.textContent?.trim() || '';
 
-    // Find best match in tracked statuses
-    const match = statuses.find((s) => {
-      const cleanSubject = (s.subject || '').trim().toLowerCase();
-      const rowSubject = subjectText.toLowerCase();
-      const rowParticipant = participantText.toLowerCase();
-      const recipientEmail = (s.recipientEmail || '').toLowerCase();
-      const recipientPrefix = recipientEmail.split('@')[0];
-
-      // Check recipient match (e.g. 'parmanjigs3' in 'To: parmanjigs3')
-      const recipientMatch = recipientPrefix && rowParticipant.includes(recipientPrefix);
-
-      // Check subject match
-      const subjectMatch = cleanSubject && cleanSubject !== '(no subject)'
-        ? (rowSubject.includes(cleanSubject) || cleanSubject.includes(rowSubject))
-        : false;
-
-      // If subject was '(no subject)', match by recipient
-      if (!cleanSubject || cleanSubject === '(no subject)') {
-        return recipientMatch;
-      }
-
-      return subjectMatch || recipientMatch;
-    });
-
+    const match = findStatusMatch(subjectText, participantText, statuses);
     if (!match) return;
 
-    // Create Status Badge
+    const cfg = getBadgeConfig(match);
     const badge = document.createElement('span');
-    badge.className = 'mailtrace-status-badge mailtrace-tooltip';
+    badge.className = `mailtrace-status-badge mailtrace-tooltip ${cfg.cssClass}`;
+    badge.innerHTML = cfg.iconHtml;
+    badge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
 
-    let badgeHtml = '<span style="color:#94a3b8;font-weight:700;">✓</span>';
-    let badgeClass = 'mailtrace-badge-sent';
-    let tooltipText = `${match.subject} — Sent • Waiting for recipient`;
-
-    if (match.replyReceived || match.status === 'REPLIED') {
-      badgeHtml = '<span style="color:#16a34a;font-weight:800;">✓✓</span> <span style="color:#7c3aed;font-weight:900;">↩</span>';
-      badgeClass = 'mailtrace-badge-replied';
-      tooltipText = `Reply received! • ${match.eventLabel}`;
-    } else if (match.totalClicks > 0 || match.status === 'CLICKED') {
-      badgeHtml = '<span style="color:#16a34a;font-weight:800;">✓✓</span> <span style="color:#2563eb;font-weight:900;">↗</span>';
-      badgeClass = 'mailtrace-badge-clicked';
-      tooltipText = `Link clicked (${match.uniqueClicks} unique) • ${match.eventLabel}`;
-    } else if (match.status === 'OPENED' || match.totalOpens > 0) {
-      badgeHtml = '<span style="color:#16a34a;font-weight:800;">✓✓</span>';
-      badgeClass = 'mailtrace-badge-opened';
-      tooltipText = `${match.eventLabel} (${match.confidence} confidence)`;
-    } else if (match.status === 'DELIVERED') {
-      badgeHtml = '<span style="color:#64748b;font-weight:800;">✓✓</span>';
-      badgeClass = 'mailtrace-badge-delivered';
-      tooltipText = `Delivered to recipient • Not yet opened`;
-    } else {
-      badgeHtml = '<span style="color:#94a3b8;font-weight:700;">✓</span>';
-      badgeClass = 'mailtrace-badge-sent';
-      tooltipText = `Sent • Waiting for recipient`;
-    }
-
-    badge.className += ` ${badgeClass}`;
-    badge.innerHTML = badgeHtml;
-    badge.setAttribute('data-tooltip', `${tooltipText} (Click to open Dashboard)`);
-
-    // Click badge to view on Dashboard
     badge.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
       window.open(`${DASHBOARD_BASE_URL}/messages/${match.messageId}`, '_blank');
     });
 
-    // Insert badge before subject or in participant area
     if (subjectEl && subjectEl.parentElement) {
       subjectEl.parentElement.insertBefore(badge, subjectEl);
     } else {
@@ -445,7 +562,120 @@ async function updateRowBadges(): Promise<void> {
   });
 }
 
-// 3. Observe First-Party Thread Viewing
+// 3. Inject Badges & Telemetry into Open Thread / Email View
+function updateThreadBadges(statuses: StatusItem[]): void {
+  // Look for thread subject headings in open email view (e.g. "hi")
+  const threadHeadings = document.querySelectorAll('h2.hP, div[role="main"] h2');
+  threadHeadings.forEach((heading) => {
+    if (heading.querySelector('.mailtrace-thread-badge') || heading.parentElement?.querySelector('.mailtrace-thread-badge')) return;
+
+    const subjectText = heading.textContent?.trim() || '';
+    if (!subjectText) return;
+
+    // Search for recipient info anywhere in this thread view
+    const mainView = document.querySelector('div[role="main"]');
+    const participantEls = mainView ? mainView.querySelectorAll('span[email], .g2, .hb, .gD') : [];
+    let participantText = '';
+    participantEls.forEach((el) => {
+      participantText += ' ' + (el.getAttribute('email') || el.textContent || '');
+    });
+
+    const match = findStatusMatch(subjectText, participantText, statuses);
+    if (!match) return;
+
+    const cfg = getBadgeConfig(match);
+
+    // 1) Inject prominent pill badge right beside the subject heading
+    const badge = document.createElement('span');
+    badge.className = `mailtrace-status-badge mailtrace-thread-badge mailtrace-tooltip ${cfg.cssClass}`;
+    badge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
+    badge.innerHTML = `${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span>`;
+
+    badge.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      window.open(`${DASHBOARD_BASE_URL}/messages/${match.messageId}`, '_blank');
+    });
+
+    heading.insertBefore(badge, heading.firstChild);
+
+    // 2) Inject sleek telemetry information banner right above the message body
+    if (!document.getElementById(`mailtrace-banner-${match.messageId}`)) {
+      const banner = document.createElement('div');
+      banner.id = `mailtrace-banner-${match.messageId}`;
+      banner.className = `mailtrace-thread-banner ${match.status === 'OPENED' ? 'opened' : match.status === 'CLICKED' ? 'clicked' : ''}`;
+
+      const bannerLeft = document.createElement('div');
+      bannerLeft.className = 'mailtrace-banner-left';
+      bannerLeft.innerHTML = `
+        <span class="mailtrace-badge-pill">⚡ MailTrace</span>
+        <span class="mailtrace-status-badge ${cfg.cssClass}" style="margin:0;">${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span></span>
+        <span class="mailtrace-banner-text">To: <strong>${match.recipientEmail}</strong> • ${cfg.tooltip}</span>
+      `;
+
+      const viewBtn = document.createElement('button');
+      viewBtn.className = 'mailtrace-banner-btn';
+      viewBtn.textContent = 'View Evidence ↗';
+      viewBtn.title = 'Inspect complete evidence timeline on MailTrace Dashboard';
+      viewBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        window.open(`${DASHBOARD_BASE_URL}/messages/${match.messageId}`, '_blank');
+      });
+
+      banner.appendChild(bannerLeft);
+      banner.appendChild(viewBtn);
+
+      const messageContainer = document.querySelector('div.adn.ads, div[role="listitem"], div.gE.iv.gt, div.nH.hx');
+      if (messageContainer && messageContainer.parentElement) {
+        messageContainer.parentElement.insertBefore(banner, messageContainer);
+      } else if (heading.parentElement) {
+        heading.parentElement.appendChild(banner);
+      }
+    }
+  });
+
+  // 3) Inject status badge directly into message header row (next to "to jignesh")
+  const messageHeaders = document.querySelectorAll('div.gH, .adn.ads .ajy');
+  messageHeaders.forEach((mHeader) => {
+    if (mHeader.querySelector('.mailtrace-header-badge')) return;
+
+    const toEl = mHeader.querySelector('span.g2, span[email], span.hb, .gD');
+    const toText = toEl?.getAttribute('email') || toEl?.textContent?.trim() || '';
+
+    const mainSubject = document.querySelector('h2.hP, div[role="main"] h2')?.textContent?.trim() || '';
+    const match = findStatusMatch(mainSubject, toText, statuses);
+    if (!match) return;
+
+    const cfg = getBadgeConfig(match);
+    const badge = document.createElement('span');
+    badge.className = `mailtrace-status-badge mailtrace-header-badge mailtrace-tooltip ${cfg.cssClass}`;
+    badge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
+    badge.innerHTML = `${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span>`;
+
+    badge.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      window.open(`${DASHBOARD_BASE_URL}/messages/${match.messageId}`, '_blank');
+    });
+
+    if (toEl && toEl.parentElement) {
+      toEl.parentElement.appendChild(badge);
+    } else {
+      mHeader.appendChild(badge);
+    }
+  });
+}
+
+// Master refresh for badges in both list and thread views
+async function refreshBadges(): Promise<void> {
+  const statuses = await fetchTrackingStatuses();
+  if (!statuses || statuses.length === 0) return;
+  updateRowBadges(statuses);
+  updateThreadBadges(statuses);
+}
+
+// 4. Observe First-Party Thread Viewing
 function observeGmailThreads(): void {
   const threadHeaders = document.querySelectorAll('h2[data-thread-perm-id]');
   threadHeaders.forEach((header) => {
@@ -477,20 +707,20 @@ async function reportConfirmedView(threadId: string): Promise<void> {
 function initializeGmailCompanion(): void {
   injectStyles();
   observeComposeWindows();
-  updateRowBadges();
+  refreshBadges();
   observeGmailThreads();
 
   // Watch for dynamic DOM changes (Gmail is an SPA)
   const observer = new MutationObserver(() => {
     observeComposeWindows();
-    updateRowBadges();
+    refreshBadges();
     observeGmailThreads();
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
 
-  // Refresh status map every 15 seconds
-  setInterval(updateRowBadges, 15000);
+  // Refresh status map every 10 seconds
+  setInterval(refreshBadges, 10000);
 }
 
 if (document.readyState === 'loading') {

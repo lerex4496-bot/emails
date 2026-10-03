@@ -2,7 +2,7 @@
  * MailTrace Extension Popup Controller
  */
 
-const DEFAULT_API_URL = 'http://localhost:3000';
+const DEFAULT_API_URL = 'https://mailtrace-api-7bx5.onrender.com';
 const DEFAULT_DASHBOARD_URL = 'https://emails-web-mu.vercel.app';
 
 const apiUrlInput = document.getElementById('api-url');
@@ -27,7 +27,10 @@ function showAlert(text, isError = false) {
 function loadSettings() {
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
     chrome.storage.sync.get(['mailtrace_api_url', 'mailtrace_dashboard_url', 'mailtrace_enabled'], (items) => {
-      apiUrlInput.value = items.mailtrace_api_url || DEFAULT_API_URL;
+      // Use Render API if not set or if still set to the old localhost:3000 default
+      const savedApi = items.mailtrace_api_url;
+      const effectiveApi = (!savedApi || savedApi === 'http://localhost:3000') ? DEFAULT_API_URL : savedApi;
+      apiUrlInput.value = effectiveApi;
       dashboardUrlInput.value = items.mailtrace_dashboard_url || DEFAULT_DASHBOARD_URL;
       autoTrackCheckbox.checked = typeof items.mailtrace_enabled === 'boolean' ? items.mailtrace_enabled : true;
       testConnection(apiUrlInput.value);

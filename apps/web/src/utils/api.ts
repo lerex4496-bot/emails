@@ -1,7 +1,10 @@
 /**
  * Resolve API endpoint URL.
- * Supports VITE_API_URL environment variable for cross-origin deployments (e.g. Vercel -> Render)
- * and falls back to relative path for same-origin or proxy setups.
+ * Supports:
+ * 1. VITE_API_URL environment variable for cross-origin builds
+ * 2. User-configured localStorage override (mailtrace_api_url)
+ * 3. Automatic Cloud Render backend fallback when deployed on Vercel or any non-localhost domain
+ * 4. Local fallback for dev proxy
  */
 function getApiBaseUrl(): string {
   try {
@@ -10,8 +13,25 @@ function getApiBaseUrl(): string {
       return String(meta.env.VITE_API_URL).replace(/\/$/, '');
     }
   } catch {
-    // fallback to relative path
+    // fallback
   }
+
+  if (typeof window !== 'undefined') {
+    try {
+      const custom = window.localStorage?.getItem('mailtrace_api_url');
+      if (custom) return custom.replace(/\/$/, '');
+    } catch {
+      // ignore
+    }
+
+    if (window.location && window.location.hostname) {
+      const host = window.location.hostname;
+      if (host !== 'localhost' && host !== '127.0.0.1') {
+        return 'https://mailtrace-api-7bx5.onrender.com';
+      }
+    }
+  }
+
   return '';
 }
 

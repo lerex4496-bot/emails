@@ -4,6 +4,22 @@
   "framework": "vite",
   "rewrites": [
     {
+      "source": "/api/:match*",
+      "destination": "https://mailtrace-api-7bx5.onrender.com/api/:match*"
+    },
+    {
+      "source": "/t/:match*",
+      "destination": "https://mailtrace-api-7bx5.onrender.com/t/:match*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://mailtrace-api-7bx5.onrender.com/health"
+    },
+    {
+      "source": "/ready",
+      "destination": "https://mailtrace-api-7bx5.onrender.com/ready"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
