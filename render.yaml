@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     buildCommand: pnpm install && pnpm build:api
-    startCommand: node services/api/dist/server.js
+    startCommand: pnpm --filter @mailtrace/database prisma:push && node services/api/dist/server.js
     envVars:
       - key: NODE_ENV
         value: production
@@ -12,13 +12,7 @@ services:
         value: 10000
       - key: JWT_SECRET
         generateValue: true
-      - key: DATABASE_URL
-        fromDatabase:
-          name: mailtrace-db
-          property: connectionString
       - key: REDIS_URL
         value: none
-
-databases:
-  - name: mailtrace-db
-    plan: free
+      - key: DATABASE_URL
+        sync: false
