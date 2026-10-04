@@ -17,23 +17,30 @@ let DASHBOARD_BASE_URL = 'https://emails-web-mu.vercel.app';
 let TRACKING_ENABLED_BY_DEFAULT = true;
 
 if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
-  chrome.storage.sync.get(['mailtrace_api_url', 'mailtrace_dashboard_url', 'mailtrace_enabled'], (items) => {
-    // Ignore stale localhost defaults if user hasn't explicitly customized
-    if (items.mailtrace_api_url && !items.mailtrace_api_url.includes('localhost') && !items.mailtrace_api_url.includes('127.0.0.1')) {
-      API_BASE_URL = items.mailtrace_api_url.replace(/\/$/, '');
-    } else {
-      API_BASE_URL = 'https://mailtrace-api-7bx5.onrender.com';
-    }
-    if (items.mailtrace_dashboard_url && !items.mailtrace_dashboard_url.includes('localhost') && !items.mailtrace_dashboard_url.includes('127.0.0.1')) {
-      DASHBOARD_BASE_URL = items.mailtrace_dashboard_url.replace(/\/$/, '');
-    } else {
-      DASHBOARD_BASE_URL = 'https://emails-web-mu.vercel.app';
-    }
-    if (typeof items.mailtrace_enabled === 'boolean') {
-      TRACKING_ENABLED_BY_DEFAULT = items.mailtrace_enabled;
-    }
-    refreshBadges();
-  });
+  try {
+    chrome.storage.sync.get(['mailtrace_api_url', 'mailtrace_dashboard_url', 'mailtrace_enabled'], (items) => {
+      if (items) {
+        if (items.mailtrace_api_url && !items.mailtrace_api_url.includes('localhost') && !items.mailtrace_api_url.includes('127.0.0.1')) {
+          API_BASE_URL = items.mailtrace_api_url.replace(/\/$/, '');
+        } else {
+          API_BASE_URL = 'https://mailtrace-api-7bx5.onrender.com';
+        }
+        if (items.mailtrace_dashboard_url && !items.mailtrace_dashboard_url.includes('localhost') && !items.mailtrace_dashboard_url.includes('127.0.0.1')) {
+          DASHBOARD_BASE_URL = items.mailtrace_dashboard_url.replace(/\/$/, '');
+        } else {
+          DASHBOARD_BASE_URL = 'https://emails-web-mu.vercel.app';
+        }
+        if (typeof items.mailtrace_enabled === 'boolean') {
+          TRACKING_ENABLED_BY_DEFAULT = items.mailtrace_enabled;
+        }
+      }
+      try {
+        refreshBadges();
+      } catch { /* ignore */ }
+    });
+  } catch (err) {
+    console.debug('[MailTrace] Storage sync notice:', err);
+  }
 }
 
 // Injected styles for Gmail UI integration
@@ -43,31 +50,38 @@ function injectStyles(): void {
   style.id = 'mailtrace-styles';
   style.textContent = `
     .mailtrace-toggle-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 4px 10px;
-      margin-left: 8px;
-      border-radius: 16px;
-      font-size: 11px;
-      font-weight: 600;
-      font-family: 'Google Sans', Roboto, sans-serif;
-      cursor: pointer;
-      user-select: none;
-      transition: all 0.15s ease-in-out;
-      border: 1px solid rgba(59, 130, 246, 0.4);
-      background: #eff6ff;
-      color: #1d4ed8;
-      vertical-align: middle;
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 5px !important;
+      padding: 4px 12px !important;
+      margin: 0 6px !important;
+      border-radius: 16px !important;
+      font-size: 11px !important;
+      font-weight: 700 !important;
+      font-family: 'Google Sans', Roboto, sans-serif !important;
+      cursor: pointer !important;
+      user-select: none !important;
+      transition: all 0.15s ease-in-out !important;
+      border: 1.5px solid #2563eb !important;
+      background: #eff6ff !important;
+      color: #1d4ed8 !important;
+      vertical-align: middle !important;
+      height: 28px !important;
+      line-height: 1 !important;
+      box-sizing: border-box !important;
+      position: relative !important;
+      z-index: 10 !important;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
     }
     .mailtrace-toggle-btn.off {
-      background: #f1f5f9;
-      border-color: #cbd5e1;
-      color: #64748b;
+      background: #f1f5f9 !important;
+      border-color: #94a3b8 !important;
+      color: #64748b !important;
     }
     .mailtrace-toggle-btn:hover {
-      opacity: 0.9;
-      transform: translateY(-0.5px);
+      opacity: 0.9 !important;
+      transform: translateY(-0.5px) !important;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15) !important;
     }
     .mailtrace-status-badge {
       display: inline-flex !important;
@@ -341,6 +355,27 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
   return cachedStatuses;
 }
 
+function findSendButton(container: HTMLElement): HTMLElement | null {
+  const aoO = container.querySelector<HTMLElement>('.aoO, .T-I-atl');
+  if (aoO) return aoO;
+
+  const byAttr = container.querySelector<HTMLElement>(
+    '[data-tooltip*="Send"], [aria-label*="Send"], [data-tooltip^="Send"]'
+  );
+  if (byAttr) return byAttr;
+
+  const candidates = container.querySelectorAll<HTMLElement>('[role="button"], button, div.T-I');
+  for (const el of candidates) {
+    const txt = (el.textContent || '').trim();
+    const aria = (el.getAttribute('aria-label') || '').trim();
+    if (txt === 'Send' || txt.startsWith('Send') || aria.startsWith('Send')) {
+      return el;
+    }
+  }
+
+  return null;
+}
+
 // 1. Hook into Gmail Compose Window (Standard, Docked, Fullscreen, and Inline)
 function observeComposeWindows(): void {
   // Query all possible compose dialogs, windows, and containers
@@ -349,19 +384,27 @@ function observeComposeWindows(): void {
   );
 
   composeDialogs.forEach((dialog) => {
-    hookComposeDialog(dialog);
+    try {
+      hookComposeDialog(dialog);
+    } catch (e) {
+      console.debug('[MailTrace] Compose hook error:', e);
+    }
   });
 
   // Direct fallback: find any Send buttons anywhere in document
   const sendBtns = document.querySelectorAll<HTMLElement>(
-    'div[role="button"][data-tooltip*="Send"]:not([data-mailtrace-hooked]), div.T-I.J-J5-Ji.aoO.v7.T-I-atl.L3:not([data-mailtrace-hooked]), div[aria-label*="Send"]:not([data-mailtrace-hooked])'
+    '.aoO, .T-I-atl, div[role="button"][data-tooltip*="Send"]:not([data-mailtrace-hooked]), div[aria-label*="Send"]:not([data-mailtrace-hooked])'
   );
   sendBtns.forEach((sendBtn) => {
-    const dialog =
-      sendBtn.closest<HTMLElement>('div[role="dialog"], div[role="region"], div.M9, div.AD, table.cf.An, div.nH') ||
-      sendBtn.parentElement?.parentElement;
-    if (dialog) {
-      hookComposeDialog(dialog);
+    try {
+      const dialog =
+        sendBtn.closest<HTMLElement>('div[role="dialog"], div[role="region"], div.M9, div.AD, table.cf.An, div.nH') ||
+        sendBtn.parentElement?.parentElement;
+      if (dialog) {
+        hookComposeDialog(dialog);
+      }
+    } catch (e) {
+      console.debug('[MailTrace] Send fallback error:', e);
     }
   });
 }
@@ -370,9 +413,7 @@ function hookComposeDialog(dialog: HTMLElement): void {
   // Check if toggle button already injected
   if (dialog.querySelector('.mailtrace-toggle-btn')) return;
 
-  const sendBtn = dialog.querySelector<HTMLElement>(
-    'div[role="button"][data-tooltip*="Send"], div.T-I.J-J5-Ji.aoO.v7.T-I-atl.L3, div[aria-label*="Send"], div[data-tooltip^="Send"]'
-  );
+  const sendBtn = findSendButton(dialog);
   if (!sendBtn) return;
 
   // Find toolbar container
@@ -403,13 +444,20 @@ function hookComposeDialog(dialog: HTMLElement): void {
       : '<span>⚪</span> <span>Track: OFF</span>';
   });
 
-  // Insert right next to Send button
-  if (sendBtn.parentElement && sendBtn.parentElement !== toolbar) {
-    sendBtn.parentElement.appendChild(btn);
-  } else if (sendBtn.nextSibling) {
-    sendBtn.parentElement?.insertBefore(btn, sendBtn.nextSibling);
+  // Strategy to insert between Send button and formatting options (Aa):
+  const formattingBtn = dialog.querySelector<HTMLElement>(
+    '[data-tooltip*="Formatting"], [aria-label*="Formatting"], .DV, .aaA'
+  );
+  if (formattingBtn && formattingBtn.parentElement) {
+    formattingBtn.parentElement.insertBefore(btn, formattingBtn);
   } else {
-    toolbar.appendChild(btn);
+    // Try after the entire Send button pill group (which includes Send + dropdown arrow)
+    const sendGroup = sendBtn.closest<HTMLElement>('.dC, td.gU.Up, .gU.Up, tr.btC > td') || sendBtn.parentElement;
+    if (sendGroup && sendGroup.parentElement) {
+      sendGroup.parentElement.insertBefore(btn, sendGroup.nextSibling);
+    } else {
+      sendBtn.insertAdjacentElement('afterend', btn);
+    }
   }
 
   // Intercept Send Button & Ctrl+Enter with reliable race-condition prevention

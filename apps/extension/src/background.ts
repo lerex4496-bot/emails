@@ -12,15 +12,19 @@ let currentApiUrl = DEFAULT_API_URL;
 // Initialize API URL from storage
 function refreshConfig(): void {
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
-    chrome.storage.sync.get(['mailtrace_api_url'], (items) => {
-      const saved = items.mailtrace_api_url;
-      if (saved && !saved.includes('localhost') && !saved.includes('127.0.0.1')) {
-        currentApiUrl = saved.replace(/\/$/, '');
-      } else {
-        currentApiUrl = DEFAULT_API_URL;
-      }
-      console.log('[MailTrace Background] Active API URL:', currentApiUrl);
-    });
+    try {
+      chrome.storage.sync.get(['mailtrace_api_url'], (items) => {
+        const saved = items?.mailtrace_api_url;
+        if (saved && !saved.includes('localhost') && !saved.includes('127.0.0.1')) {
+          currentApiUrl = saved.replace(/\/$/, '');
+        } else {
+          currentApiUrl = DEFAULT_API_URL;
+        }
+        console.log('[MailTrace Background] Active API URL:', currentApiUrl);
+      });
+    } catch (err) {
+      console.debug('[MailTrace Background] Storage read notice:', err);
+    }
   }
 }
 
