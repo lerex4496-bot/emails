@@ -659,7 +659,7 @@ function getBadgeConfig(match: StatusItem): BadgeConfig {
       tooltip: `Link clicked (${match.uniqueClicks} unique) • ${match.eventLabel}`,
     };
   }
-  if (match.status === 'OPENED' || match.totalOpens > 0) {
+  if (match.status === 'OPENED') {
     return {
       iconHtml: '<span style="color:#16a34a;font-weight:800;">✓✓</span>',
       label: 'Opened',
@@ -1025,6 +1025,20 @@ async function refreshBadges(): Promise<void> {
 
 // 4. Observe First-Party Thread Viewing
 function observeGmailThreads(): void {
+  // CRITICAL: NEVER report confirmed view when in Sent folder (#sent)
+  // The sender viewing their own sent mail is NOT an open by the recipient!
+  if (window.location.hash.includes('#sent')) {
+    const pixels = document.querySelectorAll<HTMLImageElement>(
+      'img[data-mailtrace-pixel="true"], img[src*="/t/open/"]'
+    );
+    pixels.forEach((img) => {
+      if (img.src && !img.src.startsWith('data:')) {
+        img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+      }
+    });
+    return;
+  }
+
   const threadHeaders = document.querySelectorAll('h2[data-thread-perm-id]');
   threadHeaders.forEach((header) => {
     const threadId = header.getAttribute('data-thread-perm-id');

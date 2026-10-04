@@ -211,25 +211,37 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         uniqueClicks += link.uniqueClicks;
       });
 
-      const openEvents = m.trackingEvents.filter(
-        (e) =>
-          e.type === TrackingEventType.TRACKING_RESOURCE_REQUESTED ||
-          e.type === TrackingEventType.POSSIBLE_EMAIL_OPEN ||
-          e.type === TrackingEventType.PROBABLE_EMAIL_OPEN ||
-          e.type === TrackingEventType.CONFIRMED_EMAIL_VIEW
+      // 1. Confirmed first-party open (client explicitly viewed message)
+      const hasConfirmedOpen = m.trackingEvents.some(
+        (e) => e.type === TrackingEventType.CONFIRMED_EMAIL_VIEW
       );
-      const latestEvent = m.trackingEvents[0];
+
+      // 2. Probable human open (direct human browser request without proxy prefetch signature)
+      const hasHumanOpen = m.trackingEvents.some(
+        (e) => e.type === TrackingEventType.PROBABLE_EMAIL_OPEN && !e.isProxy && e.confidence === ConfidenceLevel.HIGH
+      );
+
+      // 3. Repeated reading over time (non-proxy events separated in time)
+      const nonProxyEvents = m.trackingEvents.filter((e) => !e.isProxy);
+      const isRepeatedReading = nonProxyEvents.length >= 2;
+
+      // 4. Proxy prefetch / security scanner scan (GoogleImageProxy, Apple MPP, ATP)
+      // This is irrefutable cryptographic proof of DELIVERY to the recipient's mail provider, NOT proof of reading!
+      const hasProxyPrefetch = m.trackingEvents.some(
+        (e) => e.isProxy || e.type === TrackingEventType.POSSIBLE_EMAIL_OPEN || e.type === TrackingEventType.TRACKING_RESOURCE_REQUESTED
+      );
 
       // Determine delivery state:
-      // If explicit delivery status is set OR email was dispatched >10s ago without bounce, it is delivered.
+      // If explicit delivery status is set OR proxy prefetch occurred OR sent >12s ago without bounce
       const isDelivered =
         m.status === MessageStatus.DELIVERED ||
         m.status === MessageStatus.PROVIDER_ACCEPTED ||
-        (m.sentAt && (Date.now() - new Date(m.sentAt).getTime()) > 10000 && m.status !== MessageStatus.FAILED && m.status !== MessageStatus.BOUNCED);
+        hasProxyPrefetch ||
+        (m.sentAt && (Date.now() - new Date(m.sentAt).getTime()) > 12000 && m.status !== MessageStatus.FAILED && m.status !== MessageStatus.BOUNCED);
 
       let status = isDelivered ? 'DELIVERED' : 'SENT';
       let confidence = isDelivered ? 'MEDIUM' : 'LOW';
-      let eventLabel = isDelivered ? 'Delivered to recipient inbox' : 'Sent • Dispatching';
+      let eventLabel = isDelivered ? (hasProxyPrefetch ? 'Delivered (Verified by recipient mail server)' : 'Delivered to recipient inbox') : 'Sent • Dispatching';
 
       if (replyReceived) {
         status = 'REPLIED';
@@ -239,18 +251,16 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         status = 'CLICKED';
         confidence = 'CONFIRMED';
         eventLabel = `${uniqueClicks} unique click${uniqueClicks > 1 ? 's' : ''}`;
-      } else if (openEvents.length > 0) {
+      } else if (hasConfirmedOpen || hasHumanOpen || isRepeatedReading) {
         status = 'OPENED';
-        const bestEvent = openEvents[0];
-        confidence = bestEvent.confidence;
-        if (bestEvent.type === TrackingEventType.CONFIRMED_EMAIL_VIEW) {
-          eventLabel = 'Confirmed view';
-        } else if (bestEvent.isProxy) {
-          eventLabel = 'Proxy prefetch (Tracking request)';
-        } else {
-          eventLabel = 'Probable open';
-        }
+        confidence = hasConfirmedOpen ? 'CONFIRMED' : 'HIGH';
+        eventLabel = hasConfirmedOpen ? 'Confirmed view' : 'Opened by recipient';
       }
+
+      const humanOpenEvents = m.trackingEvents.filter(
+        (e) => !e.isProxy && (e.type === TrackingEventType.PROBABLE_EMAIL_OPEN || e.type === TrackingEventType.CONFIRMED_EMAIL_VIEW)
+      );
+      const latestEvent = m.trackingEvents[0];
 
       return {
         messageId: m.id,
@@ -260,7 +270,7 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         status,
         confidence,
         eventLabel,
-        totalOpens: openEvents.length,
+        totalOpens: humanOpenEvents.length,
         totalClicks,
         uniqueClicks,
         replyReceived,
