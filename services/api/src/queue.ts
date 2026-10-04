@@ -6,6 +6,7 @@ import {
   ConfidenceLevel,
   Classification,
   KNOWN_PROXY_SIGNATURES,
+  MessageStatus,
 } from '@mailtrace/shared';
 
 let trackingQueue: Queue | null = null;
@@ -93,6 +94,20 @@ export async function processTrackingPayload(data: TrackingJobPayload): Promise<
 
     if (!recipient) return;
 
+    // Sender self-open & outbound transit filter:
+    // If the tracking pixel is requested within 15 seconds of message creation/dispatch,
+    // it was fetched by the sender's own compose window (when appending the <img> to DOM)
+    // or by Gmail's outbound pre-send scanner. Drop it to prevent false opens!
+    const eventTimestamp = new Date(data.timestamp || Date.now());
+    const sendTime = recipient.message?.sentAt || recipient.message?.createdAt;
+    let elapsedSinceSend = 999999;
+    if (sendTime) {
+      elapsedSinceSend = eventTimestamp.getTime() - new Date(sendTime).getTime();
+      if (elapsedSinceSend < 15000) {
+        return;
+      }
+    }
+
     const ua = data.userAgent || '';
     const headers = data.headers || {};
     let isProxy = false;
@@ -129,8 +144,6 @@ export async function processTrackingPayload(data: TrackingJobPayload): Promise<
       classification = Classification.LIKELY_AUTOMATED;
       eventType = TrackingEventType.TRACKING_RESOURCE_REQUESTED;
     }
-
-    const eventTimestamp = new Date(data.timestamp || Date.now());
 
     // Burst deduplication: Check if an event for this recipient occurred within 3 seconds
     const threeSecondsAgo = new Date(eventTimestamp.getTime() - 3000);
@@ -172,14 +185,25 @@ export async function processTrackingPayload(data: TrackingJobPayload): Promise<
       },
     });
 
-    // Update message last activity timestamp
-    await prisma.message.update({
-      where: { id: recipient.messageId },
-      data: {
-        firstActivityAt: recipient.message.firstActivityAt || eventTimestamp,
-        lastActivityAt: eventTimestamp,
-      },
-    });
+    // Update message status and timestamps
+    if (recipient.message.status === MessageStatus.SENT || recipient.message.status === MessageStatus.PENDING) {
+      await prisma.message.update({
+        where: { id: recipient.messageId },
+        data: {
+          status: MessageStatus.DELIVERED,
+          firstActivityAt: recipient.message.firstActivityAt || eventTimestamp,
+          lastActivityAt: eventTimestamp,
+        },
+      });
+    } else {
+      await prisma.message.update({
+        where: { id: recipient.messageId },
+        data: {
+          firstActivityAt: recipient.message.firstActivityAt || eventTimestamp,
+          lastActivityAt: eventTimestamp,
+        },
+      });
+    }
   } else if (data.type === 'CLICK' && data.token) {
     const trackedLink = await prisma.trackedLink.findUnique({
       where: { token: data.token },

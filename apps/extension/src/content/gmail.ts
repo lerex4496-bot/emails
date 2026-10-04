@@ -75,6 +75,8 @@ function injectStyles(): void {
       color: #1d4ed8 !important;
       vertical-align: middle !important;
       height: 28px !important;
+      min-width: 90px !important;
+      margin: 0 4px !important;
       line-height: 1 !important;
       box-sizing: border-box !important;
       position: relative !important;
