@@ -47,7 +47,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
         sendResponse({ success: true, statuses: data.statuses || [] });
       })
       .catch((err) => {
-        console.warn('[MailTrace Background] GET_TRACKING_STATUS failed:', err);
+        console.debug('[MailTrace Background] GET_TRACKING_STATUS notice:', err);
         sendResponse({ success: false, error: err.message, statuses: [] });
       });
     return true; // Keep message channel open for async response
@@ -68,7 +68,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
         sendResponse({ success: true, data });
       })
       .catch((err) => {
-        console.warn('[MailTrace Background] PREPARE_TRACKING failed:', err);
+        console.debug('[MailTrace Background] PREPARE_TRACKING notice:', err);
         sendResponse({ success: false, error: err.message });
       });
     return true;

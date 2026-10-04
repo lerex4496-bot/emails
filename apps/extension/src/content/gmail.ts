@@ -263,7 +263,18 @@ let cachedStatuses: StatusItem[] = [];
 let lastStatusFetch = 0;
 let isFetchingStatuses = false;
 
+function isExtensionValid(): boolean {
+  try {
+    return Boolean(typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id);
+  } catch {
+    return false;
+  }
+}
+
 async function fetchTrackingStatuses(): Promise<StatusItem[]> {
+  if (!isExtensionValid()) {
+    return cachedStatuses;
+  }
   const now = Date.now();
   if (now - lastStatusFetch < 4000 && cachedStatuses.length > 0) {
     return cachedStatuses;
@@ -275,12 +286,16 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
   isFetchingStatuses = true;
 
   // 1. Primary path: Call background service worker (Bypasses Gmail CSP)
-  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+  if (isExtensionValid() && typeof chrome.runtime.sendMessage === 'function') {
     try {
       const response = await new Promise<{ success?: boolean; statuses?: StatusItem[]; error?: string }>((resolve) => {
+        if (!isExtensionValid()) {
+          resolve({ success: false });
+          return;
+        }
         chrome.runtime.sendMessage({ action: 'GET_TRACKING_STATUS' }, (resp) => {
-          if (chrome.runtime.lastError) {
-            resolve({ success: false, error: chrome.runtime.lastError.message });
+          if (!isExtensionValid() || chrome.runtime.lastError) {
+            resolve({ success: false, error: chrome.runtime?.lastError?.message });
           } else {
             resolve(resp || { success: false });
           }
@@ -291,11 +306,12 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
         cachedStatuses = response.statuses;
         lastStatusFetch = now;
         isFetchingStatuses = false;
-        console.log(`[MailTrace] Synchronized ${cachedStatuses.length} tracked messages via background service worker.`);
         return cachedStatuses;
       }
-    } catch (err) {
-      console.warn('[MailTrace] Background worker communication error:', err);
+    } catch {
+      // Extension context invalidated (tab needs refresh after extension reload); suppress noise
+      isFetchingStatuses = false;
+      return cachedStatuses;
     }
   }
 
@@ -307,13 +323,10 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
       if (Array.isArray(data.statuses)) {
         cachedStatuses = data.statuses;
         lastStatusFetch = now;
-        console.log(`[MailTrace] Synchronized ${cachedStatuses.length} tracked messages from ${API_BASE_URL}`);
       }
-    } else {
-      console.warn(`[MailTrace] Status fetch HTTP ${res.status}`);
     }
-  } catch (err) {
-    console.warn(`[MailTrace] Cannot reach tracking API directly:`, err);
+  } catch {
+    // Offline or CSP restricted
   } finally {
     isFetchingStatuses = false;
   }
@@ -458,11 +471,15 @@ async function injectTrackingIntoCompose(dialog: Element): Promise<void> {
   let trackingData: any = null;
 
   // 1. Primary path: Background service worker (Bypasses Gmail CSP)
-  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+  if (isExtensionValid() && typeof chrome.runtime.sendMessage === 'function') {
     try {
       const resp = await new Promise<any>((resolve) => {
+        if (!isExtensionValid()) {
+          resolve(null);
+          return;
+        }
         chrome.runtime.sendMessage({ action: 'PREPARE_TRACKING', payload: trackingPayload }, (response) => {
-          if (chrome.runtime.lastError) {
+          if (!isExtensionValid() || chrome.runtime.lastError) {
             resolve(null);
           } else {
             resolve(response);
@@ -896,27 +913,51 @@ async function reportConfirmedView(threadId: string): Promise<void> {
   }
 }
 
+let pollInterval: any = null;
+
+function safeRefreshBadges(): void {
+  if (!isExtensionValid()) {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+    return;
+  }
+  refreshBadges().catch(() => {});
+}
+
 function initializeGmailCompanion(): void {
+  if (!isExtensionValid()) return;
+
   injectStyles();
   observeComposeWindows();
-  refreshBadges();
+  safeRefreshBadges();
   observeGmailThreads();
 
   // Watch for dynamic DOM changes with debouncing
   let debounceTimeout: any = null;
   const observer = new MutationObserver(() => {
+    if (!isExtensionValid()) {
+      observer.disconnect();
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+      return;
+    }
     if (debounceTimeout) clearTimeout(debounceTimeout);
     debounceTimeout = setTimeout(() => {
+      if (!isExtensionValid()) return;
       observeComposeWindows();
-      refreshBadges();
+      safeRefreshBadges();
       observeGmailThreads();
     }, 250);
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
 
-  // Refresh status map every 5 seconds
-  setInterval(refreshBadges, 5000);
+  // Refresh status map every 5 seconds with context guard
+  pollInterval = setInterval(safeRefreshBadges, 5000);
 }
 
 if (document.readyState === 'loading') {
