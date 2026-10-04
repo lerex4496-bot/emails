@@ -38,10 +38,26 @@ describe('MailTrace Extension Manifest & Companion Tests', () => {
   });
 
   describe('findStatusMatch Algorithm Tests', () => {
-    // Import findStatusMatch
-    it('should prioritize exact subject matches over substring matches (e.g. hiiiiiiiiii vs hi)', async () => {
-      const { findStatusMatch } = await import('../content/gmail');
+    const gmailDist = fs.readFileSync(path.resolve(__dirname, '../../dist/content/gmail.js'), 'utf8');
+    const fnMatch = gmailDist.match(/function findStatusMatch\([\s\S]*?\n\}/);
+    if (!fnMatch) throw new Error('findStatusMatch not found in dist/content/gmail.js');
+    const findStatusMatch = new Function(
+      'subjectText',
+      'participantText',
+      'rowFullText',
+      'statuses',
+      'claimedIds',
+      `
+      ${fnMatch[0]}
+      return findStatusMatch(subjectText, participantText, rowFullText, statuses, claimedIds);
+    `
+    );
 
+    it('should never contain any export statement in dist/content/gmail.js', () => {
+      expect(gmailDist).not.toMatch(/^\s*export\s+/m);
+    });
+
+    it('should prioritize exact subject matches over substring matches (e.g. hiiiiiiiiii vs hi)', async () => {
       const statuses = [
         {
           messageId: 'msg-delivered-hi',
@@ -100,8 +116,6 @@ describe('MailTrace Extension Manifest & Companion Tests', () => {
     });
 
     it('should respect 1-to-1 claiming across multiple rows with identical subjects', async () => {
-      const { findStatusMatch } = await import('../content/gmail');
-
       const statuses = [
         {
           messageId: 'msg-newer-hi',

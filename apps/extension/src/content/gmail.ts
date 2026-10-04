@@ -244,7 +244,7 @@ function injectStyles(): void {
 }
 
 // Cached tracking status from API
-export interface StatusItem {
+interface StatusItem {
   messageId: string;
   subject: string;
   recipientEmail: string;
@@ -263,16 +263,27 @@ let cachedStatuses: StatusItem[] = [];
 let lastStatusFetch = 0;
 let isFetchingStatuses = false;
 
+let pollInterval: any = null;
+
+function cleanupInvalidatedExtension(): void {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+}
+
 function isExtensionValid(): boolean {
   try {
     return Boolean(typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id);
   } catch {
+    cleanupInvalidatedExtension();
     return false;
   }
 }
 
 async function fetchTrackingStatuses(): Promise<StatusItem[]> {
   if (!isExtensionValid()) {
+    cleanupInvalidatedExtension();
     return cachedStatuses;
   }
   const now = Date.now();
@@ -290,16 +301,24 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
     try {
       const response = await new Promise<{ success?: boolean; statuses?: StatusItem[]; error?: string }>((resolve) => {
         if (!isExtensionValid()) {
+          cleanupInvalidatedExtension();
           resolve({ success: false });
           return;
         }
-        chrome.runtime.sendMessage({ action: 'GET_TRACKING_STATUS' }, (resp) => {
-          if (!isExtensionValid() || chrome.runtime.lastError) {
-            resolve({ success: false, error: chrome.runtime?.lastError?.message });
-          } else {
-            resolve(resp || { success: false });
-          }
-        });
+        try {
+          chrome.runtime.sendMessage({ action: 'GET_TRACKING_STATUS' }, (resp) => {
+            const err = chrome.runtime?.lastError;
+            if (err || !isExtensionValid()) {
+              cleanupInvalidatedExtension();
+              resolve({ success: false });
+            } else {
+              resolve(resp || { success: false });
+            }
+          });
+        } catch {
+          cleanupInvalidatedExtension();
+          resolve({ success: false });
+        }
       });
 
       if (response && response.success && Array.isArray(response.statuses)) {
@@ -307,7 +326,7 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
         lastStatusFetch = now;
       }
     } catch {
-      // Extension context invalidated (tab needs refresh after extension reload); suppress noise
+      cleanupInvalidatedExtension();
     }
   }
 
@@ -555,7 +574,7 @@ function getBadgeConfig(match: StatusItem): BadgeConfig {
 }
 
 // Robust multi-pass status matcher with exact subject priority and 1-to-1 claiming
-export function findStatusMatch(
+function findStatusMatch(
   subjectText: string,
   participantText: string,
   rowFullText: string,
@@ -909,8 +928,6 @@ async function reportConfirmedView(threadId: string): Promise<void> {
     // Context invalidated
   }
 }
-
-let pollInterval: any = null;
 
 function safeRefreshBadges(): void {
   if (!isExtensionValid()) {
