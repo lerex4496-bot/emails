@@ -573,13 +573,12 @@ function getBadgeConfig(match: StatusItem): BadgeConfig {
   };
 }
 
-// Robust multi-pass status matcher with exact subject priority and 1-to-1 claiming
+// Robust multi-pass status matcher with exact subject priority
 function findStatusMatch(
   subjectText: string,
   participantText: string,
   rowFullText: string,
-  statuses: StatusItem[],
-  claimedIds?: Set<string>
+  statuses: StatusItem[]
 ): StatusItem | undefined {
   const normSubject = (subjectText || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
   const normParticipant = (participantText || '').toLowerCase().trim();
@@ -601,9 +600,8 @@ function findStatusMatch(
     return false;
   };
 
-  // PASS 1: Exact Subject Match + Recipient Match (Unclaimed)
+  // PASS 1: Exact Subject Match + Recipient Match
   for (const s of statuses) {
-    if (claimedIds && claimedIds.has(s.messageId)) continue;
     const cleanSubj = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
     const isStatusNoSubj = !cleanSubj || cleanSubj === '(no subject)' || cleanSubj === 'no subject';
 
@@ -620,10 +618,11 @@ function findStatusMatch(
   // PASS 2: Exact Subject Match without strict recipient match (e.g. if Gmail displays contact name instead of email)
   if (!isRowNoSubj) {
     for (const s of statuses) {
-      if (claimedIds && claimedIds.has(s.messageId)) continue;
       const cleanSubj = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
-      if (cleanSubj && cleanSubj !== '(no subject)' && cleanSubj === normSubject) {
-        return s;
+      if (cleanSubj && cleanSubj !== '(no subject)' && cleanSubj.length >= 2) {
+        if (normSubject.includes(cleanSubj) || normRow.includes(cleanSubj)) {
+          return s;
+        }
       }
     }
   }
@@ -632,12 +631,11 @@ function findStatusMatch(
   // NEVER do arbitrary substring match (e.g. "hi" must NEVER match "hiiiiiiiiii")
   if (!isRowNoSubj && normSubject.length >= 4) {
     for (const s of statuses) {
-      if (claimedIds && claimedIds.has(s.messageId)) continue;
       const cleanSubj = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
       if (!cleanSubj || cleanSubj === '(no subject)' || cleanSubj.length < 4) continue;
 
       if (isRecipMatch(s)) {
-        if (normSubject.startsWith(cleanSubj) || cleanSubj.startsWith(normSubject)) {
+        if (normSubject.startsWith(cleanSubj) || cleanSubj.startsWith(normSubject) || normSubject.includes(cleanSubj)) {
           return s;
         }
       }
@@ -647,7 +645,6 @@ function findStatusMatch(
   // PASS 4: (no subject) + Recipient Match
   if (isRowNoSubj) {
     for (const s of statuses) {
-      if (claimedIds && claimedIds.has(s.messageId)) continue;
       const cleanSubj = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
       if (!cleanSubj || cleanSubj === '(no subject)') {
         if (isRecipMatch(s)) return s;
@@ -661,7 +658,6 @@ function findStatusMatch(
 // 2. Inject & Live-Update Status Badges in Gmail Message Rows (Sent / Inbox)
 function updateRowBadges(statuses: StatusItem[]): void {
   const rows = document.querySelectorAll('tr.zA, tr[role="row"]');
-  const claimedIds = new Set<string>();
 
   rows.forEach((row) => {
     // Search subject ONLY within the subject cell (td.a4W or .xY.a4W) to avoid picking up recipient .bqe
@@ -675,10 +671,8 @@ function updateRowBadges(statuses: StatusItem[]): void {
 
     const rowFullText = row.textContent?.trim() || '';
 
-    const match = findStatusMatch(subjectText, participantText, rowFullText, statuses, claimedIds);
+    const match = findStatusMatch(subjectText, participantText, rowFullText, statuses);
     if (!match) return;
-
-    claimedIds.add(match.messageId);
 
     const cfg = getBadgeConfig(match);
     const existingBadge = row.querySelector('.mailtrace-status-badge') as HTMLElement | null;

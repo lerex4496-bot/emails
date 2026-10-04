@@ -14,7 +14,7 @@ function refreshConfig(): void {
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
     chrome.storage.sync.get(['mailtrace_api_url'], (items) => {
       const saved = items.mailtrace_api_url;
-      if (saved && !saved.includes('localhost') && !saved.includes('127.0.0.1')) {
+      if (saved) {
         currentApiUrl = saved.replace(/\/$/, '');
       } else {
         currentApiUrl = DEFAULT_API_URL;
