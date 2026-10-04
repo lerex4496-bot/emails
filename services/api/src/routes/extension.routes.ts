@@ -15,8 +15,8 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/api/v1/extension/prepare-tracking', async (request, reply) => {
     const proto = (request.headers['x-forwarded-proto'] as string) || request.protocol || 'https';
     const host = (request.headers['x-forwarded-host'] as string) || request.headers.host;
-    const requestBase = host && !host.includes('localhost') && !host.includes('127.0.0.1') ? `${proto}://${host}` : defaultTrackingBaseUrl;
-    const trackingBaseUrl = (process.env.TRACKING_BASE_URL || process.env.RENDER_EXTERNAL_URL || requestBase).replace(/\/$/, '');
+    const requestBase = host && !host.includes('localhost') && !host.includes('127.0.0.1') ? `${proto}://${host}` : null;
+    const trackingBaseUrl = (requestBase || process.env.TRACKING_BASE_URL || process.env.RENDER_EXTERNAL_URL || 'https://mailtrace-api-7bx5.onrender.com').replace(/\/$/, '');
 
     const body = (request.body || {}) as {
       to?: Array<{ email: string; name?: string }>;
