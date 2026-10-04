@@ -88,6 +88,23 @@ function injectStyles(): void {
       opacity: 0.85 !important;
       box-shadow: 0 1px 4px rgba(0,0,0,0.15) !important;
     }
+    .mailtrace-recip-tick {
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      margin-right: 6px !important;
+      padding: 1px 4px !important;
+      border-radius: 4px !important;
+      cursor: pointer !important;
+      vertical-align: middle !important;
+      font-size: 11px !important;
+      flex-shrink: 0 !important;
+      line-height: 1.2 !important;
+    }
+    .mailtrace-recip-tick:hover {
+      opacity: 0.85 !important;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.15) !important;
+    }
     .mailtrace-thread-badge {
       font-size: 12px !important;
       padding: 2px 8px !important;
@@ -244,12 +261,45 @@ interface StatusItem {
 
 let cachedStatuses: StatusItem[] = [];
 let lastStatusFetch = 0;
+let isFetchingStatuses = false;
 
 async function fetchTrackingStatuses(): Promise<StatusItem[]> {
   const now = Date.now();
-  if (now - lastStatusFetch < 5000 && cachedStatuses.length > 0) {
+  if (now - lastStatusFetch < 4000 && cachedStatuses.length > 0) {
     return cachedStatuses;
   }
+  if (isFetchingStatuses && cachedStatuses.length > 0) {
+    return cachedStatuses;
+  }
+
+  isFetchingStatuses = true;
+
+  // 1. Primary path: Call background service worker (Bypasses Gmail CSP)
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    try {
+      const response = await new Promise<{ success?: boolean; statuses?: StatusItem[]; error?: string }>((resolve) => {
+        chrome.runtime.sendMessage({ action: 'GET_TRACKING_STATUS' }, (resp) => {
+          if (chrome.runtime.lastError) {
+            resolve({ success: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(resp || { success: false });
+          }
+        });
+      });
+
+      if (response && response.success && Array.isArray(response.statuses)) {
+        cachedStatuses = response.statuses;
+        lastStatusFetch = now;
+        isFetchingStatuses = false;
+        console.log(`[MailTrace] Synchronized ${cachedStatuses.length} tracked messages via background service worker.`);
+        return cachedStatuses;
+      }
+    } catch (err) {
+      console.warn('[MailTrace] Background worker communication error:', err);
+    }
+  }
+
+  // 2. Fallback path: Direct fetch
   try {
     const res = await fetch(`${API_BASE_URL}/api/v1/extension/tracking-status`);
     if (res.ok) {
@@ -263,8 +313,11 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
       console.warn(`[MailTrace] Status fetch HTTP ${res.status}`);
     }
   } catch (err) {
-    console.warn(`[MailTrace] Cannot reach tracking API at ${API_BASE_URL}:`, err);
+    console.warn(`[MailTrace] Cannot reach tracking API directly:`, err);
+  } finally {
+    isFetchingStatuses = false;
   }
+
   return cachedStatuses;
 }
 
@@ -394,56 +447,86 @@ async function injectTrackingIntoCompose(dialog: Element): Promise<void> {
     .map((a) => a.href)
     .filter((href) => href && href.startsWith('http') && !href.includes('/t/'));
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2500); // 2.5s safe timeout
+  const trackingPayload = {
+    subject,
+    to: toList.length > 0 ? toList : [{ email: 'recipient@example.com' }],
+    links,
+    enableOpenTracking: true,
+    enableClickTracking: links.length > 0,
+  };
 
-    const res = await fetch(`${API_BASE_URL}/api/v1/extension/prepare-tracking`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        subject,
-        to: toList.length > 0 ? toList : [{ email: 'recipient@example.com' }],
-        links,
-        enableOpenTracking: true,
-        enableClickTracking: links.length > 0,
-      }),
-    });
+  let trackingData: any = null;
 
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const data = await res.json();
-
-      // 1. Rewrite Outbound Links
-      if (Array.isArray(data.trackedLinks)) {
-        for (const item of data.trackedLinks) {
-          linkEls.forEach((a) => {
-            if (a.href === item.originalUrl) {
-              a.href = item.trackedUrl;
-              a.setAttribute('data-mailtrace-tracked', 'true');
-            }
-          });
-        }
+  // 1. Primary path: Background service worker (Bypasses Gmail CSP)
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+    try {
+      const resp = await new Promise<any>((resolve) => {
+        chrome.runtime.sendMessage({ action: 'PREPARE_TRACKING', payload: trackingPayload }, (response) => {
+          if (chrome.runtime.lastError) {
+            resolve(null);
+          } else {
+            resolve(response);
+          }
+        });
+      });
+      if (resp && resp.success && resp.data) {
+        trackingData = resp.data;
       }
-
-      // 2. Append Invisible Tracking Pixel (1x1 PNG)
-      if (data.pixelUrl) {
-        const pixel = document.createElement('img');
-        pixel.src = data.pixelUrl;
-        pixel.width = 1;
-        pixel.height = 1;
-        pixel.alt = '';
-        pixel.setAttribute('data-mailtrace-pixel', 'true');
-        pixel.setAttribute('style', 'display:none;width:0;height:0;max-height:0;visibility:hidden;border:0;');
-        bodyEl.appendChild(pixel);
-      }
-
-      console.log('[MailTrace] Tracking pixel and link wrappers injected for:', subject);
+    } catch {
+      // Fallback to direct fetch
     }
-  } catch (err) {
-    console.warn('[MailTrace] Could not contact tracking API:', err);
+  }
+
+  // 2. Fallback path: Direct fetch
+  if (!trackingData) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500); // 2.5s safe timeout
+
+      const res = await fetch(`${API_BASE_URL}/api/v1/extension/prepare-tracking`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify(trackingPayload),
+      });
+
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        trackingData = await res.json();
+      }
+    } catch (err) {
+      console.warn('[MailTrace] Could not contact tracking API:', err);
+    }
+  }
+
+  if (trackingData) {
+    // 1. Rewrite Outbound Links
+    if (Array.isArray(trackingData.trackedLinks)) {
+      for (const item of trackingData.trackedLinks) {
+        linkEls.forEach((a) => {
+          if (a.href === item.originalUrl) {
+            a.href = item.trackedUrl;
+            a.setAttribute('data-mailtrace-tracked', 'true');
+          }
+        });
+      }
+    }
+
+    // 2. Append Invisible Tracking Pixel (1x1 PNG)
+    if (trackingData.pixelUrl) {
+      const pixel = document.createElement('img');
+      pixel.src = trackingData.pixelUrl;
+      pixel.width = 1;
+      pixel.height = 1;
+      pixel.alt = '';
+      pixel.setAttribute('data-mailtrace-pixel', 'true');
+      pixel.setAttribute('style', 'display:none;width:0;height:0;max-height:0;visibility:hidden;border:0;');
+      bodyEl.appendChild(pixel);
+    }
+
+    console.log('[MailTrace] Tracking pixel and link wrappers injected for:', subject);
+    setTimeout(refreshBadges, 800);
   }
 }
 
@@ -588,7 +671,7 @@ function updateRowBadges(statuses: StatusItem[]): void {
       window.open(`${DASHBOARD_BASE_URL}/messages/${match.messageId}`, '_blank');
     });
 
-    // Insert badge right in front of the subject line
+    // 1. Insert badge right in front of the subject line
     const insertTarget = subjectCell?.querySelector('.xT, .y6') || subjectCell;
     if (insertTarget) {
       insertTarget.insertBefore(badge, insertTarget.firstChild);
@@ -598,6 +681,22 @@ function updateRowBadges(statuses: StatusItem[]): void {
         container.prepend(badge);
       }
     }
+
+    // 2. Also inject a sleek tick directly in the Recipient column (td.yX) next to "To: ..."
+    const recipCell = row.querySelector('td.yX, .yW, .yP');
+    if (recipCell && !recipCell.querySelector('.mailtrace-recip-tick')) {
+      const tick = document.createElement('span');
+      tick.className = `mailtrace-recip-tick mailtrace-tooltip ${cfg.cssClass}`;
+      tick.innerHTML = cfg.iconHtml;
+      tick.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
+      tick.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        window.open(`${DASHBOARD_BASE_URL}/messages/${match.messageId}`, '_blank');
+      });
+      recipCell.insertBefore(tick, recipCell.firstChild);
+    }
+
     console.log('[MailTrace] Injected row badge for:', match.subject, '->', cfg.label);
   });
 }
@@ -743,24 +842,27 @@ async function reportConfirmedView(threadId: string): Promise<void> {
   }
 }
 
-// Initialize Loop
 function initializeGmailCompanion(): void {
   injectStyles();
   observeComposeWindows();
   refreshBadges();
   observeGmailThreads();
 
-  // Watch for dynamic DOM changes (Gmail is an SPA)
+  // Watch for dynamic DOM changes with debouncing
+  let debounceTimeout: any = null;
   const observer = new MutationObserver(() => {
-    observeComposeWindows();
-    refreshBadges();
-    observeGmailThreads();
+    if (debounceTimeout) clearTimeout(debounceTimeout);
+    debounceTimeout = setTimeout(() => {
+      observeComposeWindows();
+      refreshBadges();
+      observeGmailThreads();
+    }, 250);
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
 
-  // Refresh status map every 10 seconds
-  setInterval(refreshBadges, 10000);
+  // Refresh status map every 5 seconds
+  setInterval(refreshBadges, 5000);
 }
 
 if (document.readyState === 'loading') {
