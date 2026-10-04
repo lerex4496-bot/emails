@@ -244,7 +244,7 @@ function injectStyles(): void {
 }
 
 // Cached tracking status from API
-interface StatusItem {
+export interface StatusItem {
   messageId: string;
   subject: string;
   recipientEmail: string;
@@ -305,32 +305,13 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
       if (response && response.success && Array.isArray(response.statuses)) {
         cachedStatuses = response.statuses;
         lastStatusFetch = now;
-        isFetchingStatuses = false;
-        return cachedStatuses;
       }
     } catch {
       // Extension context invalidated (tab needs refresh after extension reload); suppress noise
-      isFetchingStatuses = false;
-      return cachedStatuses;
     }
   }
 
-  // 2. Fallback path: Direct fetch
-  try {
-    const res = await fetch(`${API_BASE_URL}/api/v1/extension/tracking-status`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.statuses)) {
-        cachedStatuses = data.statuses;
-        lastStatusFetch = now;
-      }
-    }
-  } catch {
-    // Offline or CSP restricted
-  } finally {
-    isFetchingStatuses = false;
-  }
-
+  isFetchingStatuses = false;
   return cachedStatuses;
 }
 
@@ -490,30 +471,7 @@ async function injectTrackingIntoCompose(dialog: Element): Promise<void> {
         trackingData = resp.data;
       }
     } catch {
-      // Fallback to direct fetch
-    }
-  }
-
-  // 2. Fallback path: Direct fetch
-  if (!trackingData) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500); // 2.5s safe timeout
-
-      const res = await fetch(`${API_BASE_URL}/api/v1/extension/prepare-tracking`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify(trackingPayload),
-      });
-
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        trackingData = await res.json();
-      }
-    } catch (err) {
-      console.warn('[MailTrace] Could not contact tracking API:', err);
+      // Extension context invalidated
     }
   }
 
@@ -596,59 +554,84 @@ function getBadgeConfig(match: StatusItem): BadgeConfig {
   };
 }
 
-// Robust multi-pass status matcher
-function findStatusMatch(
+// Robust multi-pass status matcher with exact subject priority and 1-to-1 claiming
+export function findStatusMatch(
   subjectText: string,
   participantText: string,
   rowFullText: string,
-  statuses: StatusItem[]
+  statuses: StatusItem[],
+  claimedIds?: Set<string>
 ): StatusItem | undefined {
   const normSubject = (subjectText || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
   const normParticipant = (participantText || '').toLowerCase().trim();
   const normRow = (rowFullText || '').toLowerCase().trim();
 
-  // Pass 1: Recipient AND Subject match
-  for (const s of statuses) {
-    const cleanSubj = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
-    const recipEmail = (s.recipientEmail || '').toLowerCase().trim();
-    const recipPrefix = recipEmail.split('@')[0] || '';
+  const isRowNoSubj = !normSubject || normSubject === '(no subject)' || normSubject === 'no subject';
 
-    const recipMatch = recipEmail && (
-      normParticipant.includes(recipEmail) ||
-      normRow.includes(recipEmail) ||
-      (recipPrefix.length >= 3 && (normParticipant.includes(recipPrefix) || normRow.includes(recipPrefix)))
-    );
+  const isRecipMatch = (s: StatusItem) => {
+    const sRecip = (s.recipientEmail || '').toLowerCase().trim();
+    if (!sRecip) return false;
+    const sPrefix = sRecip.split('@')[0] || '';
 
-    const isNoSubj = !cleanSubj || cleanSubj === '(no subject)';
-    const subjMatch = isNoSubj
-      ? (normRow.includes('(no subject)') || normRow.includes('no subject') || normSubject.includes('no subject'))
-      : (cleanSubj.length > 0 && (normSubject.includes(cleanSubj) || normRow.includes(cleanSubj)));
-
-    if (recipMatch && subjMatch) {
-      return s;
+    if (normParticipant.includes(sRecip) || normRow.includes(sRecip)) return true;
+    if (sPrefix.length >= 3) {
+      if (normParticipant.includes(sPrefix) || normRow.includes(sPrefix)) return true;
+      const cleanPart = normParticipant.replace(/[\.\s]+$/, '');
+      if (cleanPart && (sPrefix.startsWith(cleanPart) || cleanPart.startsWith(sPrefix))) return true;
     }
-  }
+    return false;
+  };
 
-  // Pass 2: Distinctive Subject match (when subject is not '(no subject)')
+  // PASS 1: Exact Subject Match + Recipient Match (Unclaimed)
   for (const s of statuses) {
+    if (claimedIds && claimedIds.has(s.messageId)) continue;
     const cleanSubj = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
-    if (cleanSubj && cleanSubj !== '(no subject)' && cleanSubj.length >= 2) {
-      if (normSubject.includes(cleanSubj) || normRow.includes(cleanSubj)) {
+    const isStatusNoSubj = !cleanSubj || cleanSubj === '(no subject)' || cleanSubj === 'no subject';
+
+    if (isRecipMatch(s)) {
+      if (isRowNoSubj && isStatusNoSubj) {
+        return s;
+      }
+      if (!isRowNoSubj && !isStatusNoSubj && cleanSubj === normSubject) {
         return s;
       }
     }
   }
 
-  // Pass 3: Match by Recipient + (no subject) indicator
-  for (const s of statuses) {
-    const cleanSubj = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
-    const recipEmail = (s.recipientEmail || '').toLowerCase().trim();
-    const recipPrefix = recipEmail.split('@')[0] || '';
-    const isNoSubj = !cleanSubj || cleanSubj === '(no subject)';
-
-    if (isNoSubj && (normRow.includes('no subject') || normRow.includes('(no subject)'))) {
-      if (recipEmail && (normParticipant.includes(recipEmail) || normRow.includes(recipPrefix))) {
+  // PASS 2: Exact Subject Match without strict recipient match (e.g. if Gmail displays contact name instead of email)
+  if (!isRowNoSubj) {
+    for (const s of statuses) {
+      if (claimedIds && claimedIds.has(s.messageId)) continue;
+      const cleanSubj = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
+      if (cleanSubj && cleanSubj !== '(no subject)' && cleanSubj === normSubject) {
         return s;
+      }
+    }
+  }
+
+  // PASS 3: Prefix / Truncated Subject Match + Recipient Match (minimum 4 characters)
+  // NEVER do arbitrary substring match (e.g. "hi" must NEVER match "hiiiiiiiiii")
+  if (!isRowNoSubj && normSubject.length >= 4) {
+    for (const s of statuses) {
+      if (claimedIds && claimedIds.has(s.messageId)) continue;
+      const cleanSubj = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
+      if (!cleanSubj || cleanSubj === '(no subject)' || cleanSubj.length < 4) continue;
+
+      if (isRecipMatch(s)) {
+        if (normSubject.startsWith(cleanSubj) || cleanSubj.startsWith(normSubject)) {
+          return s;
+        }
+      }
+    }
+  }
+
+  // PASS 4: (no subject) + Recipient Match
+  if (isRowNoSubj) {
+    for (const s of statuses) {
+      if (claimedIds && claimedIds.has(s.messageId)) continue;
+      const cleanSubj = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
+      if (!cleanSubj || cleanSubj === '(no subject)') {
+        if (isRecipMatch(s)) return s;
       }
     }
   }
@@ -659,6 +642,8 @@ function findStatusMatch(
 // 2. Inject & Live-Update Status Badges in Gmail Message Rows (Sent / Inbox)
 function updateRowBadges(statuses: StatusItem[]): void {
   const rows = document.querySelectorAll('tr.zA, tr[role="row"]');
+  const claimedIds = new Set<string>();
+
   rows.forEach((row) => {
     // Search subject ONLY within the subject cell (td.a4W or .xY.a4W) to avoid picking up recipient .bqe
     const subjectCell = row.querySelector('td.a4W, td.xY.a4W, .xT');
@@ -671,8 +656,10 @@ function updateRowBadges(statuses: StatusItem[]): void {
 
     const rowFullText = row.textContent?.trim() || '';
 
-    const match = findStatusMatch(subjectText, participantText, rowFullText, statuses);
+    const match = findStatusMatch(subjectText, participantText, rowFullText, statuses, claimedIds);
     if (!match) return;
+
+    claimedIds.add(match.messageId);
 
     const cfg = getBadgeConfig(match);
     const existingBadge = row.querySelector('.mailtrace-status-badge') as HTMLElement | null;
@@ -681,6 +668,7 @@ function updateRowBadges(statuses: StatusItem[]): void {
     if (existingBadge) {
       if (
         existingBadge.getAttribute('data-mailtrace-status') !== match.status ||
+        existingBadge.getAttribute('data-mailtrace-message-id') !== match.messageId ||
         existingBadge.getAttribute('data-mailtrace-clicks') !== String(match.totalClicks) ||
         existingBadge.getAttribute('data-mailtrace-opens') !== String(match.totalOpens)
       ) {
@@ -688,6 +676,7 @@ function updateRowBadges(statuses: StatusItem[]): void {
         existingBadge.innerHTML = `${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span>`;
         existingBadge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
         existingBadge.setAttribute('data-mailtrace-status', match.status);
+        existingBadge.setAttribute('data-mailtrace-message-id', match.messageId);
         existingBadge.setAttribute('data-mailtrace-clicks', String(match.totalClicks));
         existingBadge.setAttribute('data-mailtrace-opens', String(match.totalOpens));
       }
@@ -697,6 +686,7 @@ function updateRowBadges(statuses: StatusItem[]): void {
       badge.innerHTML = `${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span>`;
       badge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
       badge.setAttribute('data-mailtrace-status', match.status);
+      badge.setAttribute('data-mailtrace-message-id', match.messageId);
       badge.setAttribute('data-mailtrace-clicks', String(match.totalClicks));
       badge.setAttribute('data-mailtrace-opens', String(match.totalOpens));
 
@@ -721,11 +711,15 @@ function updateRowBadges(statuses: StatusItem[]): void {
     // 2. Also inject or live-update sleek tick directly in the Recipient column (td.yX) next to "To: ..."
     const recipCell = row.querySelector('td.yX, .yW, .yP');
     if (existingTick) {
-      if (existingTick.getAttribute('data-mailtrace-status') !== match.status) {
+      if (
+        existingTick.getAttribute('data-mailtrace-status') !== match.status ||
+        existingTick.getAttribute('data-mailtrace-message-id') !== match.messageId
+      ) {
         existingTick.className = `mailtrace-recip-tick mailtrace-tooltip ${cfg.cssClass}`;
         existingTick.innerHTML = cfg.iconHtml;
         existingTick.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
         existingTick.setAttribute('data-mailtrace-status', match.status);
+        existingTick.setAttribute('data-mailtrace-message-id', match.messageId);
       }
     } else if (recipCell) {
       const tick = document.createElement('span');
@@ -733,6 +727,7 @@ function updateRowBadges(statuses: StatusItem[]): void {
       tick.innerHTML = cfg.iconHtml;
       tick.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
       tick.setAttribute('data-mailtrace-status', match.status);
+      tick.setAttribute('data-mailtrace-message-id', match.messageId);
       tick.addEventListener('click', (e) => {
         e.stopPropagation();
         e.preventDefault();
@@ -898,18 +893,20 @@ function observeGmailThreads(): void {
 }
 
 async function reportConfirmedView(threadId: string): Promise<void> {
+  if (!isExtensionValid() || typeof chrome.runtime.sendMessage !== 'function') return;
   try {
-    await fetch(`${API_BASE_URL}/api/v1/events/confirm-view`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    chrome.runtime.sendMessage({
+      action: 'CONFIRM_VIEW',
+      payload: {
         messageId: threadId,
         deviceIdentifier: 'browser-extension-gmail',
         platform: 'EXTENSION',
-      }),
+      },
+    }, () => {
+      if (chrome.runtime?.lastError) { /* ignore */ }
     });
   } catch {
-    // Offline
+    // Context invalidated
   }
 }
 
@@ -960,8 +957,10 @@ function initializeGmailCompanion(): void {
   pollInterval = setInterval(safeRefreshBadges, 5000);
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initializeGmailCompanion);
-} else {
-  initializeGmailCompanion();
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeGmailCompanion);
+  } else {
+    initializeGmailCompanion();
+  }
 }

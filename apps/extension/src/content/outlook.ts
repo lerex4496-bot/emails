@@ -20,18 +20,21 @@ function observeOutlookThreads(): void {
 }
 
 async function reportConfirmedViewOutlook(): Promise<void> {
-  try {
-    await fetch('http://localhost:3000/api/v1/events/confirm-view', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messageId: '00000000-0000-0000-0000-000000000000',
-        deviceIdentifier: 'browser-extension-outlook',
-        platform: 'EXTENSION',
-      }),
-    });
-  } catch {
-    // Offline
+  if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+    try {
+      chrome.runtime.sendMessage({
+        action: 'CONFIRM_VIEW',
+        payload: {
+          messageId: '00000000-0000-0000-0000-000000000000',
+          deviceIdentifier: 'browser-extension-outlook',
+          platform: 'EXTENSION',
+        },
+      }, () => {
+        if (chrome.runtime?.lastError) { /* ignore */ }
+      });
+    } catch {
+      // Offline / context invalidated
+    }
   }
 }
 
