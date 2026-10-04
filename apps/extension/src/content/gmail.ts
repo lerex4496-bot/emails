@@ -538,7 +538,7 @@ async function injectTrackingIntoCompose(dialog: Element): Promise<void> {
       pixel.height = 1;
       pixel.alt = '';
       pixel.setAttribute('data-mailtrace-pixel', 'true');
-      pixel.setAttribute('style', 'display:none;width:0;height:0;max-height:0;visibility:hidden;border:0;');
+      pixel.setAttribute('style', 'width:1px!important;height:1px!important;border:0!important;padding:0!important;margin:0!important;outline:none!important;opacity:0.01!important;');
       bodyEl.appendChild(pixel);
     }
 

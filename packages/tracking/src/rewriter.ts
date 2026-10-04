@@ -67,7 +67,7 @@ export function injectTracking({
 
   // 2. Append tracking pixel if openToken is provided
   if (openToken) {
-    const pixelImg = `<img src="${baseUrl}/t/open/${openToken}" width="1" height="1" alt="" border="0" style="position:absolute;width:1px;height:1px;border:0;padding:0;margin:0;overflow:hidden;opacity:0;" />`;
+    const pixelImg = `<img src="${baseUrl}/t/open/${openToken}.png" width="1" height="1" alt="" border="0" style="width:1px!important;height:1px!important;border:0!important;padding:0!important;margin:0!important;outline:none!important;opacity:0.01!important;" />`;
 
     if ($('body').length > 0) {
       $('body').append(pixelImg);

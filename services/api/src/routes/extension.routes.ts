@@ -144,7 +144,7 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
 
     const pixelUrl = openToken ? `${trackingBaseUrl}/t/open/${openToken}.png` : null;
     const pixelHtml = pixelUrl
-      ? `<img src="${pixelUrl}" width="1" height="1" alt="" style="display:none;width:0;height:0;max-height:0;visibility:hidden;border:0;" data-mailtrace-pixel="true" />`
+      ? `<img src="${pixelUrl}" width="1" height="1" alt="" style="width:1px!important;height:1px!important;border:0!important;padding:0!important;margin:0!important;outline:none!important;opacity:0.01!important;" data-mailtrace-pixel="true" />`
       : '';
 
     const trackedLinks = Object.entries(linkTokenMap).map(([originalUrl, token]) => ({
