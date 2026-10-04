@@ -26,11 +26,11 @@ describe('HTML Tracking Rewriter & Link Extraction', () => {
       trackingBaseUrl: 'https://track.mailtrace.io',
     });
 
-    expect(output).toContain('<img src="https://track.mailtrace.io/t/open/open_tok_12345"');
+    expect(output).toContain('<img src="https://track.mailtrace.io/t/open/open_tok_12345.png"');
     expect(output).toContain('width="1" height="1"');
-    expect(output).toContain('opacity:0');
+    expect(output).toContain('opacity:0.01');
     // Ensure pixel is placed before </body>
-    const pixelPos = output.indexOf('<img src="https://track.mailtrace.io/t/open/open_tok_12345"');
+    const pixelPos = output.indexOf('<img src="https://track.mailtrace.io/t/open/open_tok_12345.png"');
     const bodyClosePos = output.indexOf('</body>');
     expect(pixelPos).toBeLessThan(bodyClosePos);
   });
@@ -65,6 +65,6 @@ describe('HTML Tracking Rewriter & Link Extraction', () => {
       trackingBaseUrl: 'https://track.mailtrace.io',
     });
 
-    expect(output).toContain('<img src="https://track.mailtrace.io/t/open/open_tok_fragment"');
+    expect(output).toContain('<img src="https://track.mailtrace.io/t/open/open_tok_fragment.png"');
   });
 });
