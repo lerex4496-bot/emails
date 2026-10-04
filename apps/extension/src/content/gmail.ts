@@ -49,16 +49,24 @@ function injectStyles(): void {
   const style = document.createElement('style');
   style.id = 'mailtrace-styles';
   style.textContent = `
+    .mailtrace-toggle-cell {
+      vertical-align: middle !important;
+      padding: 0 4px !important;
+      display: table-cell !important;
+      width: auto !important;
+      white-space: nowrap !important;
+    }
     .mailtrace-toggle-btn {
       display: inline-flex !important;
       align-items: center !important;
+      justify-content: center !important;
       gap: 5px !important;
-      padding: 4px 12px !important;
-      margin: 0 6px !important;
+      padding: 3px 10px !important;
+      margin: 0 !important;
       border-radius: 16px !important;
       font-size: 11px !important;
       font-weight: 700 !important;
-      font-family: 'Google Sans', Roboto, sans-serif !important;
+      font-family: 'Google Sans', Roboto, Arial, sans-serif !important;
       cursor: pointer !important;
       user-select: none !important;
       transition: all 0.15s ease-in-out !important;
@@ -70,13 +78,16 @@ function injectStyles(): void {
       line-height: 1 !important;
       box-sizing: border-box !important;
       position: relative !important;
-      z-index: 10 !important;
+      z-index: 100 !important;
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+      white-space: nowrap !important;
+      visibility: visible !important;
+      opacity: 1 !important;
     }
     .mailtrace-toggle-btn.off {
-      background: #f1f5f9 !important;
-      border-color: #94a3b8 !important;
-      color: #64748b !important;
+      background: #334155 !important;
+      border-color: #64748b !important;
+      color: #cbd5e1 !important;
     }
     .mailtrace-toggle-btn:hover {
       opacity: 0.9 !important;
@@ -120,7 +131,8 @@ function injectStyles(): void {
       letter-spacing: -1px !important;
       flex-shrink: 0 !important;
       line-height: 1.2 !important;
-      background: rgba(128, 128, 128, 0.15) !important;
+      background: rgba(128, 128, 128, 0.2) !important;
+      border: 1px solid rgba(128, 128, 128, 0.3) !important;
     }
     .mailtrace-recip-tick:hover {
       opacity: 0.85 !important;
@@ -297,7 +309,6 @@ function isExtensionValid(): boolean {
   try {
     return Boolean(typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id);
   } catch {
-    cleanupInvalidatedExtension();
     return false;
   }
 }
@@ -308,7 +319,7 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
     return cachedStatuses;
   }
   const now = Date.now();
-  if (now - lastStatusFetch < 4000 && cachedStatuses.length > 0) {
+  if (now - lastStatusFetch < 3000 && cachedStatuses.length > 0) {
     return cachedStatuses;
   }
   if (isFetchingStatuses && cachedStatuses.length > 0) {
@@ -322,22 +333,23 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
     try {
       const response = await new Promise<{ success?: boolean; statuses?: StatusItem[]; error?: string }>((resolve) => {
         if (!isExtensionValid()) {
-          cleanupInvalidatedExtension();
           resolve({ success: false });
           return;
         }
         try {
           chrome.runtime.sendMessage({ action: 'GET_TRACKING_STATUS' }, (resp) => {
             const err = chrome.runtime?.lastError;
-            if (err || !isExtensionValid()) {
+            if (err && err.message && err.message.includes('Extension context invalidated')) {
               cleanupInvalidatedExtension();
               resolve({ success: false });
             } else {
               resolve(resp || { success: false });
             }
           });
-        } catch {
-          cleanupInvalidatedExtension();
+        } catch (e: any) {
+          if (e && e.message && e.message.includes('Extension context invalidated')) {
+            cleanupInvalidatedExtension();
+          }
           resolve({ success: false });
         }
       });
@@ -347,7 +359,7 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
         lastStatusFetch = now;
       }
     } catch {
-      cleanupInvalidatedExtension();
+      // Ignore transient network errors
     }
   }
 
@@ -356,6 +368,9 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
 }
 
 function findSendButton(container: HTMLElement): HTMLElement | null {
+  if (container.classList && (container.classList.contains('aoO') || container.classList.contains('T-I-atl'))) {
+    return container;
+  }
   const aoO = container.querySelector<HTMLElement>('.aoO, .T-I-atl');
   if (aoO) return aoO;
 
@@ -376,58 +391,28 @@ function findSendButton(container: HTMLElement): HTMLElement | null {
   return null;
 }
 
-// 1. Hook into Gmail Compose Window (Standard, Docked, Fullscreen, and Inline)
-function observeComposeWindows(): void {
-  // Query all possible compose dialogs, windows, and containers
-  const composeDialogs = document.querySelectorAll<HTMLElement>(
-    'div[role="dialog"], div[role="region"], div.M9, div.AD, div.inboxsdk__compose, table.cf.An, div[aria-label*="Compose"], div[aria-label*="New Message"], div.nH.Hd'
-  );
+// Hook a specific Send button with the native MailTrace tracking toggle
+function hookSendButton(sendBtn: HTMLElement, dialogContainer?: HTMLElement): void {
+  // Check if this send button or its immediate container already has a MailTrace toggle
+  const rowContainer = sendBtn.closest<HTMLElement>('tr.btC, .btA, [role="toolbar"]') || sendBtn.parentElement;
+  if (rowContainer && rowContainer.querySelector('.mailtrace-toggle-btn')) return;
 
-  composeDialogs.forEach((dialog) => {
-    try {
-      hookComposeDialog(dialog);
-    } catch (e) {
-      console.debug('[MailTrace] Compose hook error:', e);
-    }
-  });
+  // Determine compose root
+  const composeRoot = dialogContainer ||
+    sendBtn.closest<HTMLElement>('div[role="dialog"], div.AD, div.M9, div[role="region"], table.cf.An, div.inboxsdk__compose, form, div.aoI') ||
+    sendBtn.closest<HTMLElement>('div.nH.Hd') ||
+    document.body;
 
-  // Direct fallback: find any Send buttons anywhere in document
-  const sendBtns = document.querySelectorAll<HTMLElement>(
-    '.aoO, .T-I-atl, div[role="button"][data-tooltip*="Send"]:not([data-mailtrace-hooked]), div[aria-label*="Send"]:not([data-mailtrace-hooked])'
-  );
-  sendBtns.forEach((sendBtn) => {
-    try {
-      const dialog =
-        sendBtn.closest<HTMLElement>('div[role="dialog"], div[role="region"], div.M9, div.AD, table.cf.An, div.nH') ||
-        sendBtn.parentElement?.parentElement;
-      if (dialog) {
-        hookComposeDialog(dialog);
-      }
-    } catch (e) {
-      console.debug('[MailTrace] Send fallback error:', e);
-    }
-  });
-}
-
-function hookComposeDialog(dialog: HTMLElement): void {
-  // Check if toggle button already injected
-  if (dialog.querySelector('.mailtrace-toggle-btn')) return;
-
-  const sendBtn = findSendButton(dialog);
-  if (!sendBtn) return;
-
-  // Find toolbar container
-  const toolbar =
-    dialog.querySelector<HTMLElement>('tr.btC, td.gU.Up, td.gU, div.btA, div.gU.Up, [role="toolbar"]') ||
-    sendBtn.closest<HTMLElement>('tr, td, .gU, .btA, div.dC') ||
-    sendBtn.parentElement;
-
-  if (!toolbar) return;
+  if (composeRoot && composeRoot !== document.body && composeRoot.querySelector('.mailtrace-toggle-btn')) {
+    return;
+  }
 
   // Create Toggle Button
   const btn = document.createElement('div');
   btn.className = 'mailtrace-toggle-btn' + (TRACKING_ENABLED_BY_DEFAULT ? '' : ' off');
   btn.setAttribute('data-mailtrace-active', TRACKING_ENABLED_BY_DEFAULT ? 'true' : 'false');
+  btn.setAttribute('role', 'button');
+  btn.setAttribute('tabindex', '0');
   btn.title = 'Click to toggle MailTrace tracking on/off for this email';
   btn.innerHTML = TRACKING_ENABLED_BY_DEFAULT
     ? '<span>⚡</span> <span>Track: ON</span>'
@@ -435,6 +420,7 @@ function hookComposeDialog(dialog: HTMLElement): void {
 
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
+    e.preventDefault();
     const isCurrentlyOn = btn.getAttribute('data-mailtrace-active') === 'true';
     const newState = !isCurrentlyOn;
     btn.setAttribute('data-mailtrace-active', newState ? 'true' : 'false');
@@ -444,20 +430,19 @@ function hookComposeDialog(dialog: HTMLElement): void {
       : '<span>⚪</span> <span>Track: OFF</span>';
   });
 
-  // Strategy to insert between Send button and formatting options (Aa):
-  const formattingBtn = dialog.querySelector<HTMLElement>(
-    '[data-tooltip*="Formatting"], [aria-label*="Formatting"], .DV, .aaA'
-  );
-  if (formattingBtn && formattingBtn.parentElement) {
-    formattingBtn.parentElement.insertBefore(btn, formattingBtn);
+  // Where to insert:
+  // 1. Table cell insertion (standard Gmail compose toolbar is a <table class="cf An"><tr class="btC">...</tr></table>)
+  const sendTd = sendBtn.closest<HTMLElement>('td.gU.Up, td.gU, td');
+  if (sendTd && sendTd.parentElement && sendTd.parentElement.tagName === 'TR') {
+    const toggleCell = document.createElement('td');
+    toggleCell.className = 'gU mailtrace-toggle-cell';
+    toggleCell.style.cssText = 'vertical-align: middle !important; padding: 0 4px !important; display: table-cell !important; width: auto !important;';
+    toggleCell.appendChild(btn);
+    sendTd.insertAdjacentElement('afterend', toggleCell);
   } else {
-    // Try after the entire Send button pill group (which includes Send + dropdown arrow)
-    const sendGroup = sendBtn.closest<HTMLElement>('.dC, td.gU.Up, .gU.Up, tr.btC > td') || sendBtn.parentElement;
-    if (sendGroup && sendGroup.parentElement) {
-      sendGroup.parentElement.insertBefore(btn, sendGroup.nextSibling);
-    } else {
-      sendBtn.insertAdjacentElement('afterend', btn);
-    }
+    // 2. Fallback for non-table layouts (inline reply, flex divs)
+    const sendWrapper = sendBtn.closest<HTMLElement>('.dC') || sendBtn;
+    sendWrapper.insertAdjacentElement('afterend', btn);
   }
 
   // Intercept Send Button & Ctrl+Enter with reliable race-condition prevention
@@ -487,7 +472,7 @@ function hookComposeDialog(dialog: HTMLElement): void {
       btn.innerHTML = '<span>⏳</span> <span>Tracking...</span>';
 
       try {
-        await injectTrackingIntoCompose(dialog);
+        await injectTrackingIntoCompose(composeRoot);
       } catch (err) {
         console.error('[MailTrace] Injection error:', err);
       } finally {
@@ -500,7 +485,7 @@ function hookComposeDialog(dialog: HTMLElement): void {
 
     sendBtn.addEventListener('click', triggerTrackedSend, true);
 
-    dialog.addEventListener('keydown', (e: any) => {
+    composeRoot.addEventListener('keydown', (e: any) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         triggerTrackedSend(e);
       }
@@ -508,9 +493,40 @@ function hookComposeDialog(dialog: HTMLElement): void {
   }
 }
 
+// 1. Hook into Gmail Compose Window (Standard, Docked, Fullscreen, and Inline)
+function observeComposeWindows(): void {
+  // 1. Direct search for all Send buttons in document
+  const sendBtns = document.querySelectorAll<HTMLElement>(
+    '.aoO, .T-I-atl, div[role="button"][data-tooltip*="Send"], div[aria-label*="Send"], div[data-tooltip^="Send"]'
+  );
+  sendBtns.forEach((sendBtn) => {
+    try {
+      hookSendButton(sendBtn);
+    } catch (e) {
+      console.debug('[MailTrace] SendBtn hook error:', e);
+    }
+  });
+
+  // 2. Also search all compose dialogs
+  const composeDialogs = document.querySelectorAll<HTMLElement>(
+    'div[role="dialog"], div[role="region"], div.M9, div.AD, div.inboxsdk__compose, table.cf.An, div[aria-label*="Compose"], div[aria-label*="New Message"], div.nH.Hd'
+  );
+  composeDialogs.forEach((dialog) => {
+    try {
+      const sendBtn = findSendButton(dialog);
+      if (sendBtn) {
+        hookSendButton(sendBtn, dialog);
+      }
+    } catch (e) {
+      console.debug('[MailTrace] Dialog hook error:', e);
+    }
+  });
+}
+
 // Inject tracking pixel and rewrite links in Compose Body
 async function injectTrackingIntoCompose(dialog: HTMLElement): Promise<void> {
-  const bodyEl = dialog.querySelector<HTMLElement>(
+  const composeRoot = dialog || document.body;
+  const bodyEl = composeRoot.querySelector<HTMLElement>(
     'div[aria-label*="Message Body"], div[role="textbox"], div[contenteditable="true"], .Am.Al.editable, div[aria-label*="Body"]'
   );
   if (!bodyEl) return;
@@ -519,7 +535,7 @@ async function injectTrackingIntoCompose(dialog: HTMLElement): Promise<void> {
   if (bodyEl.querySelector('[data-mailtrace-pixel="true"]')) return;
 
   // Extract Subject
-  const subjectInput = dialog.querySelector<HTMLInputElement>(
+  const subjectInput = composeRoot.querySelector<HTMLInputElement>(
     'input[name="subjectbox"], input[placeholder*="Subject"], input[aria-label*="Subject"]'
   );
   const rawSubject = subjectInput?.value?.trim();
@@ -527,7 +543,7 @@ async function injectTrackingIntoCompose(dialog: HTMLElement): Promise<void> {
 
   // Extract Recipient(s)
   const toList: Array<{ email: string; name?: string }> = [];
-  const recipientEls = dialog.querySelectorAll<HTMLElement>(
+  const recipientEls = composeRoot.querySelectorAll<HTMLElement>(
     '[email], [data-hovercard-id], input[name="to"], input[peoplekit-id], div[name="to"] span, [aria-label*="To"]'
   );
 
@@ -542,7 +558,7 @@ async function injectTrackingIntoCompose(dialog: HTMLElement): Promise<void> {
   });
 
   if (toList.length === 0) {
-    const fallbackTo = dialog.querySelector<HTMLInputElement>('input[name="to"]');
+    const fallbackTo = composeRoot.querySelector<HTMLInputElement>('input[name="to"]');
     if (fallbackTo?.value && fallbackTo.value.includes('@')) {
       toList.push({ email: fallbackTo.value.trim() });
     }
@@ -614,7 +630,7 @@ async function injectTrackingIntoCompose(dialog: HTMLElement): Promise<void> {
     }
 
     console.log('[MailTrace] Tracking pixel and link wrappers injected for:', subject);
-    setTimeout(refreshBadges, 800);
+    setTimeout(safeRefreshBadges, 1200);
   }
 }
 
@@ -653,7 +669,7 @@ function getBadgeConfig(match: StatusItem): BadgeConfig {
   }
   if (match.status === 'DELIVERED') {
     return {
-      iconHtml: '<span style="color:#64748b;font-weight:800;">✓✓</span>',
+      iconHtml: '<span style="color:#94a3b8;font-weight:800;">✓✓</span>',
       label: 'Delivered',
       cssClass: 'mailtrace-badge-delivered',
       tooltip: 'Delivered to recipient • Not yet opened',
@@ -676,7 +692,8 @@ function findStatusMatch(
   claimedIds?: Set<string>
 ): StatusItem | undefined {
   const normSubject = (subjectText || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
-  const normParticipant = (participantText || '').toLowerCase().trim();
+  const rawParticipant = (participantText || '').toLowerCase().replace(/^to:\s*/i, '').trim();
+  const cleanParticipant = rawParticipant.replace(/[\.\s…]+$/, '').trim();
   const normRow = (rowFullText || '').toLowerCase().trim();
 
   const isRowNoSubj = !normSubject || normSubject === '(no subject)' || normSubject === 'no subject';
@@ -686,11 +703,13 @@ function findStatusMatch(
     if (!sRecip) return false;
     const sPrefix = sRecip.split('@')[0] || '';
 
-    if (normParticipant.includes(sRecip) || normRow.includes(sRecip)) return true;
-    if (sPrefix.length >= 3) {
-      if (normParticipant.includes(sPrefix) || normRow.includes(sPrefix)) return true;
-      const cleanPart = normParticipant.replace(/[\.\s]+$/, '');
-      if (cleanPart && (sPrefix.startsWith(cleanPart) || cleanPart.startsWith(sPrefix))) return true;
+    // Direct email match
+    if (normRow.includes(sRecip) || rawParticipant.includes(sRecip)) return true;
+
+    // Email prefix match (e.g. "parmarjigs3" matches "parmarjigs372")
+    if (sPrefix.length >= 2) {
+      if (normRow.includes(sPrefix) || rawParticipant.includes(sPrefix)) return true;
+      if (cleanParticipant && (sPrefix.startsWith(cleanParticipant) || cleanParticipant.startsWith(sPrefix))) return true;
     }
     return false;
   };
@@ -711,7 +730,7 @@ function findStatusMatch(
     }
   }
 
-  // PASS 2: Exact Subject Match without strict recipient match (e.g. if Gmail displays contact name instead of email)
+  // PASS 2: Exact Subject Match without strict recipient match (e.g. if Gmail displays contact nickname)
   if (!isRowNoSubj) {
     for (const s of statuses) {
       if (claimedIds && claimedIds.has(s.messageId)) continue;
@@ -724,12 +743,12 @@ function findStatusMatch(
     }
   }
 
-  // PASS 3: Prefix / Truncated Subject Match + Recipient Match (minimum 4 characters)
-  if (!isRowNoSubj && normSubject.length >= 4) {
+  // PASS 3: Prefix / Truncated Subject Match + Recipient Match (minimum 3 characters)
+  if (!isRowNoSubj && normSubject.length >= 3) {
     for (const s of statuses) {
       if (claimedIds && claimedIds.has(s.messageId)) continue;
       const cleanSubj = (s.subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
-      if (!cleanSubj || cleanSubj === '(no subject)' || cleanSubj.length < 4) continue;
+      if (!cleanSubj || cleanSubj === '(no subject)' || cleanSubj.length < 3) continue;
 
       if (isRecipMatch(s)) {
         if (normSubject.startsWith(cleanSubj) || cleanSubj.startsWith(normSubject) || normSubject.includes(cleanSubj)) {
@@ -762,10 +781,14 @@ function updateRowBadges(statuses: StatusItem[]): void {
     // Search subject strictly within subject element (.bog or .bqe) to avoid matching stray spans
     const subjectEl = row.querySelector('.bog, .bqe, span[data-thread-id]');
     const subjectCell = row.querySelector('td.a4W, td.xY.a4W, .xT');
-    const subjectText = subjectEl?.textContent?.trim() || '';
+    let subjectText = subjectEl?.textContent?.trim() || '';
+    if (!subjectText && subjectCell) {
+      const cellText = subjectCell.textContent?.trim() || '';
+      subjectText = cellText.split(' - ')[0]?.trim() || cellText;
+    }
 
     // Search recipient ONLY within recipient cell (td.yX, .yW, .yP)
-    const participantEl = row.querySelector('td.yX, .yW, .yP, span[email]');
+    const participantEl = row.querySelector('td.yX, .yW, .yP, span[email], span[name]');
     const participantEmail = participantEl?.getAttribute('email') || '';
     const participantText = participantEmail || participantEl?.textContent?.trim() || '';
 
@@ -1066,13 +1089,16 @@ function initializeGmailCompanion(): void {
       observeComposeWindows();
       safeRefreshBadges();
       observeGmailThreads();
-    }, 250);
+    }, 200);
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
 
-  // Refresh status map every 5 seconds with context guard
-  pollInterval = setInterval(safeRefreshBadges, 5000);
+  // Refresh status map AND re-check compose windows every 3 seconds
+  pollInterval = setInterval(() => {
+    safeRefreshBadges();
+    observeComposeWindows();
+  }, 3000);
 }
 
 if (typeof document !== 'undefined') {
