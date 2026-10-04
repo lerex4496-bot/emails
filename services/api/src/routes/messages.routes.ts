@@ -217,8 +217,7 @@ export const messageRoutes: FastifyPluginAsync = async (fastify) => {
         const primaryRecipient = m.recipients[0];
         const isDelivered =
           m.status === MessageStatus.DELIVERED ||
-          m.status === MessageStatus.PROVIDER_ACCEPTED ||
-          (m.sentAt && (Date.now() - new Date(m.sentAt).getTime()) > 10000 && m.status !== MessageStatus.FAILED && m.status !== MessageStatus.BOUNCED);
+          m.status === MessageStatus.PROVIDER_ACCEPTED;
 
         return {
           id: m.id,
