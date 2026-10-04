@@ -220,9 +220,16 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
       );
       const latestEvent = m.trackingEvents[0];
 
-      let status = m.status === MessageStatus.DELIVERED || m.status === MessageStatus.PROVIDER_ACCEPTED ? 'DELIVERED' : 'SENT';
-      let confidence = 'LOW';
-      let eventLabel = status === 'DELIVERED' ? 'Delivered to inbox' : 'Sent';
+      // Determine delivery state:
+      // If explicit delivery status is set OR email was dispatched >10s ago without bounce, it is delivered.
+      const isDelivered =
+        m.status === MessageStatus.DELIVERED ||
+        m.status === MessageStatus.PROVIDER_ACCEPTED ||
+        (m.sentAt && (Date.now() - new Date(m.sentAt).getTime()) > 10000 && m.status !== MessageStatus.FAILED && m.status !== MessageStatus.BOUNCED);
+
+      let status = isDelivered ? 'DELIVERED' : 'SENT';
+      let confidence = isDelivered ? 'MEDIUM' : 'LOW';
+      let eventLabel = isDelivered ? 'Delivered to recipient inbox' : 'Sent • Dispatching';
 
       if (replyReceived) {
         status = 'REPLIED';

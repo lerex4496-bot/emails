@@ -215,10 +215,15 @@ export const messageRoutes: FastifyPluginAsync = async (fastify) => {
     return {
       messages: messages.map((m) => {
         const primaryRecipient = m.recipients[0];
+        const isDelivered =
+          m.status === MessageStatus.DELIVERED ||
+          m.status === MessageStatus.PROVIDER_ACCEPTED ||
+          (m.sentAt && (Date.now() - new Date(m.sentAt).getTime()) > 10000 && m.status !== MessageStatus.FAILED && m.status !== MessageStatus.BOUNCED);
+
         return {
           id: m.id,
           subject: m.subject,
-          status: m.status,
+          status: isDelivered ? MessageStatus.DELIVERED : m.status,
           sentAt: m.sentAt,
           firstActivityAt: m.firstActivityAt,
           lastActivityAt: m.lastActivityAt,

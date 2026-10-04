@@ -639,12 +639,10 @@ function findStatusMatch(
   return undefined;
 }
 
-// 2. Inject Status Badges in Gmail Message Rows (Sent / Inbox)
+// 2. Inject & Live-Update Status Badges in Gmail Message Rows (Sent / Inbox)
 function updateRowBadges(statuses: StatusItem[]): void {
   const rows = document.querySelectorAll('tr.zA, tr[role="row"]');
   rows.forEach((row) => {
-    if (row.querySelector('.mailtrace-status-badge')) return;
-
     // Search subject ONLY within the subject cell (td.a4W or .xY.a4W) to avoid picking up recipient .bqe
     const subjectCell = row.querySelector('td.a4W, td.xY.a4W, .xT');
     const subjectEl = subjectCell?.querySelector('.bog, .bqe, span[data-thread-id], span');
@@ -660,35 +658,64 @@ function updateRowBadges(statuses: StatusItem[]): void {
     if (!match) return;
 
     const cfg = getBadgeConfig(match);
-    const badge = document.createElement('span');
-    badge.className = `mailtrace-status-badge mailtrace-tooltip ${cfg.cssClass}`;
-    badge.innerHTML = `${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span>`;
-    badge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
+    const existingBadge = row.querySelector('.mailtrace-status-badge') as HTMLElement | null;
+    const existingTick = row.querySelector('.mailtrace-recip-tick') as HTMLElement | null;
 
-    badge.addEventListener('click', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      window.open(`${DASHBOARD_BASE_URL}/messages/${match.messageId}`, '_blank');
-    });
-
-    // 1. Insert badge right in front of the subject line
-    const insertTarget = subjectCell?.querySelector('.xT, .y6') || subjectCell;
-    if (insertTarget) {
-      insertTarget.insertBefore(badge, insertTarget.firstChild);
+    if (existingBadge) {
+      if (
+        existingBadge.getAttribute('data-mailtrace-status') !== match.status ||
+        existingBadge.getAttribute('data-mailtrace-clicks') !== String(match.totalClicks) ||
+        existingBadge.getAttribute('data-mailtrace-opens') !== String(match.totalOpens)
+      ) {
+        existingBadge.className = `mailtrace-status-badge mailtrace-tooltip ${cfg.cssClass}`;
+        existingBadge.innerHTML = `${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span>`;
+        existingBadge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
+        existingBadge.setAttribute('data-mailtrace-status', match.status);
+        existingBadge.setAttribute('data-mailtrace-clicks', String(match.totalClicks));
+        existingBadge.setAttribute('data-mailtrace-opens', String(match.totalOpens));
+      }
     } else {
-      const container = row.querySelector('.y6, .xY, td.xY, td.yX');
-      if (container) {
-        container.prepend(badge);
+      const badge = document.createElement('span');
+      badge.className = `mailtrace-status-badge mailtrace-tooltip ${cfg.cssClass}`;
+      badge.innerHTML = `${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span>`;
+      badge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
+      badge.setAttribute('data-mailtrace-status', match.status);
+      badge.setAttribute('data-mailtrace-clicks', String(match.totalClicks));
+      badge.setAttribute('data-mailtrace-opens', String(match.totalOpens));
+
+      badge.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        window.open(`${DASHBOARD_BASE_URL}/messages/${match.messageId}`, '_blank');
+      });
+
+      // 1. Insert badge right in front of the subject line
+      const insertTarget = subjectCell?.querySelector('.xT, .y6') || subjectCell;
+      if (insertTarget) {
+        insertTarget.insertBefore(badge, insertTarget.firstChild);
+      } else {
+        const container = row.querySelector('.y6, .xY, td.xY, td.yX');
+        if (container) {
+          container.prepend(badge);
+        }
       }
     }
 
-    // 2. Also inject a sleek tick directly in the Recipient column (td.yX) next to "To: ..."
+    // 2. Also inject or live-update sleek tick directly in the Recipient column (td.yX) next to "To: ..."
     const recipCell = row.querySelector('td.yX, .yW, .yP');
-    if (recipCell && !recipCell.querySelector('.mailtrace-recip-tick')) {
+    if (existingTick) {
+      if (existingTick.getAttribute('data-mailtrace-status') !== match.status) {
+        existingTick.className = `mailtrace-recip-tick mailtrace-tooltip ${cfg.cssClass}`;
+        existingTick.innerHTML = cfg.iconHtml;
+        existingTick.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
+        existingTick.setAttribute('data-mailtrace-status', match.status);
+      }
+    } else if (recipCell) {
       const tick = document.createElement('span');
       tick.className = `mailtrace-recip-tick mailtrace-tooltip ${cfg.cssClass}`;
       tick.innerHTML = cfg.iconHtml;
       tick.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
+      tick.setAttribute('data-mailtrace-status', match.status);
       tick.addEventListener('click', (e) => {
         e.stopPropagation();
         e.preventDefault();
@@ -696,18 +723,14 @@ function updateRowBadges(statuses: StatusItem[]): void {
       });
       recipCell.insertBefore(tick, recipCell.firstChild);
     }
-
-    console.log('[MailTrace] Injected row badge for:', match.subject, '->', cfg.label);
   });
 }
 
-// 3. Inject Badges & Telemetry into Open Thread / Email View
+// 3. Inject & Live-Update Badges & Telemetry into Open Thread / Email View
 function updateThreadBadges(statuses: StatusItem[]): void {
   // Look for thread subject headings in open email view (e.g. "hi")
   const threadHeadings = document.querySelectorAll('h2.hP, div[role="main"] h2');
   threadHeadings.forEach((heading) => {
-    if (heading.querySelector('.mailtrace-thread-badge') || heading.parentElement?.querySelector('.mailtrace-thread-badge')) return;
-
     const subjectText = heading.textContent?.trim() || '';
     if (!subjectText) return;
 
@@ -723,23 +746,44 @@ function updateThreadBadges(statuses: StatusItem[]): void {
     if (!match) return;
 
     const cfg = getBadgeConfig(match);
+    const existingThreadBadge = heading.querySelector('.mailtrace-thread-badge') as HTMLElement | null;
 
-    // 1) Inject prominent pill badge right beside the subject heading
-    const badge = document.createElement('span');
-    badge.className = `mailtrace-status-badge mailtrace-thread-badge mailtrace-tooltip ${cfg.cssClass}`;
-    badge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
-    badge.innerHTML = `${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span>`;
+    if (existingThreadBadge) {
+      if (existingThreadBadge.getAttribute('data-mailtrace-status') !== match.status) {
+        existingThreadBadge.className = `mailtrace-status-badge mailtrace-thread-badge mailtrace-tooltip ${cfg.cssClass}`;
+        existingThreadBadge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
+        existingThreadBadge.innerHTML = `${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span>`;
+        existingThreadBadge.setAttribute('data-mailtrace-status', match.status);
+      }
+    } else {
+      const badge = document.createElement('span');
+      badge.className = `mailtrace-status-badge mailtrace-thread-badge mailtrace-tooltip ${cfg.cssClass}`;
+      badge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
+      badge.setAttribute('data-mailtrace-status', match.status);
+      badge.innerHTML = `${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span>`;
 
-    badge.addEventListener('click', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      window.open(`${DASHBOARD_BASE_URL}/messages/${match.messageId}`, '_blank');
-    });
+      badge.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        window.open(`${DASHBOARD_BASE_URL}/messages/${match.messageId}`, '_blank');
+      });
 
-    heading.insertBefore(badge, heading.firstChild);
+      heading.insertBefore(badge, heading.firstChild);
+    }
 
     // 2) Inject sleek telemetry information banner right above the message body
-    if (!document.getElementById(`mailtrace-banner-${match.messageId}`)) {
+    const existingBanner = document.getElementById(`mailtrace-banner-${match.messageId}`);
+    if (existingBanner) {
+      existingBanner.className = `mailtrace-thread-banner ${match.status === 'OPENED' ? 'opened' : match.status === 'CLICKED' ? 'clicked' : ''}`;
+      const bannerLeft = existingBanner.querySelector('.mailtrace-banner-left');
+      if (bannerLeft) {
+        bannerLeft.innerHTML = `
+          <span class="mailtrace-badge-pill">⚡ MailTrace</span>
+          <span class="mailtrace-status-badge ${cfg.cssClass}" style="margin:0;">${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span></span>
+          <span class="mailtrace-banner-text">To: <strong>${match.recipientEmail}</strong> • ${cfg.tooltip}</span>
+        `;
+      }
+    } else {
       const banner = document.createElement('div');
       banner.id = `mailtrace-banner-${match.messageId}`;
       banner.className = `mailtrace-thread-banner ${match.status === 'OPENED' ? 'opened' : match.status === 'CLICKED' ? 'clicked' : ''}`;
@@ -777,8 +821,6 @@ function updateThreadBadges(statuses: StatusItem[]): void {
   // 3) Inject status badge directly into message header row (next to "to jignesh")
   const messageHeaders = document.querySelectorAll('div.gH, .adn.ads .ajy');
   messageHeaders.forEach((mHeader) => {
-    if (mHeader.querySelector('.mailtrace-header-badge')) return;
-
     const toEl = mHeader.querySelector('span.g2, span[email], span.hb, .gD');
     const toText = toEl?.getAttribute('email') || toEl?.textContent?.trim() || '';
 
@@ -787,21 +829,33 @@ function updateThreadBadges(statuses: StatusItem[]): void {
     if (!match) return;
 
     const cfg = getBadgeConfig(match);
-    const badge = document.createElement('span');
-    badge.className = `mailtrace-status-badge mailtrace-header-badge mailtrace-tooltip ${cfg.cssClass}`;
-    badge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
-    badge.innerHTML = `${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span>`;
+    const existingHeaderBadge = mHeader.querySelector('.mailtrace-header-badge') as HTMLElement | null;
 
-    badge.addEventListener('click', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      window.open(`${DASHBOARD_BASE_URL}/messages/${match.messageId}`, '_blank');
-    });
-
-    if (toEl && toEl.parentElement) {
-      toEl.parentElement.appendChild(badge);
+    if (existingHeaderBadge) {
+      if (existingHeaderBadge.getAttribute('data-mailtrace-status') !== match.status) {
+        existingHeaderBadge.className = `mailtrace-status-badge mailtrace-header-badge mailtrace-tooltip ${cfg.cssClass}`;
+        existingHeaderBadge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
+        existingHeaderBadge.setAttribute('data-mailtrace-status', match.status);
+        existingHeaderBadge.innerHTML = `${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span>`;
+      }
     } else {
-      mHeader.appendChild(badge);
+      const badge = document.createElement('span');
+      badge.className = `mailtrace-status-badge mailtrace-header-badge mailtrace-tooltip ${cfg.cssClass}`;
+      badge.setAttribute('data-tooltip', `${match.subject} — ${cfg.tooltip} (Click to open Dashboard)`);
+      badge.setAttribute('data-mailtrace-status', match.status);
+      badge.innerHTML = `${cfg.iconHtml} <span class="mailtrace-badge-label">${cfg.label}</span>`;
+
+      badge.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        window.open(`${DASHBOARD_BASE_URL}/messages/${match.messageId}`, '_blank');
+      });
+
+      if (toEl && toEl.parentElement) {
+        toEl.parentElement.appendChild(badge);
+      } else {
+        mHeader.appendChild(badge);
+      }
     }
   });
 }
