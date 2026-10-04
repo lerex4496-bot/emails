@@ -14,7 +14,7 @@ function refreshConfig(): void {
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
     chrome.storage.sync.get(['mailtrace_api_url'], (items) => {
       const saved = items.mailtrace_api_url;
-      if (saved) {
+      if (saved && !saved.includes('localhost') && !saved.includes('127.0.0.1')) {
         currentApiUrl = saved.replace(/\/$/, '');
       } else {
         currentApiUrl = DEFAULT_API_URL;
@@ -37,11 +37,20 @@ if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged)
 // Message Listener for Content Scripts
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.action === 'GET_TRACKING_STATUS') {
-    const url = `${currentApiUrl}/api/v1/extension/tracking-status`;
-    fetch(url)
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
+    const doFetch = (apiBase: string) => {
+      return fetch(`${apiBase}/api/v1/extension/tracking-status`)
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json();
+        });
+    };
+
+    doFetch(currentApiUrl)
+      .catch(() => {
+        if (currentApiUrl !== DEFAULT_API_URL) {
+          return doFetch(DEFAULT_API_URL);
+        }
+        throw new Error('API server unreachable');
       })
       .then((data) => {
         sendResponse({ success: true, statuses: data.statuses || [] });
@@ -54,15 +63,23 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   }
 
   if (request.action === 'PREPARE_TRACKING') {
-    const url = `${currentApiUrl}/api/v1/extension/prepare-tracking`;
-    fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request.payload || {}),
-    })
-      .then(async (res) => {
+    const doPrepare = (apiBase: string) => {
+      return fetch(`${apiBase}/api/v1/extension/prepare-tracking`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request.payload || {}),
+      }).then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
+      });
+    };
+
+    doPrepare(currentApiUrl)
+      .catch(() => {
+        if (currentApiUrl !== DEFAULT_API_URL) {
+          return doPrepare(DEFAULT_API_URL);
+        }
+        throw new Error('API server unreachable');
       })
       .then((data) => {
         sendResponse({ success: true, data });
@@ -75,15 +92,23 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   }
 
   if (request.action === 'CONFIRM_VIEW') {
-    const url = `${currentApiUrl}/api/v1/events/confirm-view`;
-    fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request.payload || {}),
-    })
-      .then(async (res) => {
+    const doConfirm = (apiBase: string) => {
+      return fetch(`${apiBase}/api/v1/events/confirm-view`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request.payload || {}),
+      }).then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
+      });
+    };
+
+    doConfirm(currentApiUrl)
+      .catch(() => {
+        if (currentApiUrl !== DEFAULT_API_URL) {
+          return doConfirm(DEFAULT_API_URL);
+        }
+        throw new Error('API server unreachable');
       })
       .then((data) => {
         sendResponse({ success: true, data });
