@@ -197,6 +197,10 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
           orderBy: { replyTimestamp: 'desc' },
           take: 1,
         },
+        deliveryEvents: {
+          orderBy: { timestamp: 'desc' },
+          take: 1,
+        },
       },
     });
 
@@ -211,12 +215,12 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         uniqueClicks += link.uniqueClicks;
       });
 
-      // Exclude events that occurred within 15 seconds of sentAt (sender self-triggers during compose)
+      // Filter events occurring at least 3 seconds after sentAt (exclude compose DOM insertions)
       const validOpenEvents = m.trackingEvents.filter((e) => {
         const sendTime = m.sentAt || m.createdAt;
         if (!sendTime) return false;
         const diff = new Date(e.timestamp).getTime() - new Date(sendTime).getTime();
-        return diff >= 15000;
+        return diff >= 3000;
       });
 
       // 1. Confirmed first-party open (client explicitly viewed message)
@@ -224,32 +228,25 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         (e) => e.type === TrackingEventType.CONFIRMED_EMAIL_VIEW
       );
 
-      // 2. Probable human open (direct human browser request without proxy prefetch signature, >15s after send)
-      const hasHumanOpen = validOpenEvents.some(
-        (e) => e.type === TrackingEventType.PROBABLE_EMAIL_OPEN && !e.isProxy && e.confidence === ConfidenceLevel.HIGH
+      // 2. Open events (human browser, Google Image Proxy, Apple MPP)
+      const openEvents = validOpenEvents.filter(
+        (e) =>
+          e.type === TrackingEventType.CONFIRMED_EMAIL_VIEW ||
+          e.type === TrackingEventType.PROBABLE_EMAIL_OPEN ||
+          (e.type === TrackingEventType.POSSIBLE_EMAIL_OPEN && e.confidence !== ConfidenceLevel.LOW)
       );
+      const hasOpen = openEvents.length > 0;
 
-      // 3. Repeated reading over time (non-proxy events separated in time, >15s after send)
-      const nonProxyEvents = validOpenEvents.filter((e) => !e.isProxy);
-      const isRepeatedReading = nonProxyEvents.length >= 2;
-
-      // 4. Proxy prefetch / security scanner scan (GoogleImageProxy, Apple MPP, ATP)
-      // This is proof of DELIVERY to the recipient's mail provider, NOT proof of reading!
-      const hasProxyPrefetch = m.trackingEvents.some(
-        (e) => e.isProxy || e.type === TrackingEventType.POSSIBLE_EMAIL_OPEN || e.type === TrackingEventType.TRACKING_RESOURCE_REQUESTED
-      );
-
-      // Determine delivery state:
-      const isDelivered =
+      // 3. Delivery indication (server received, scanner event, MTA accepted)
+      const hasDelivery =
         m.status === MessageStatus.DELIVERED ||
         m.status === MessageStatus.PROVIDER_ACCEPTED ||
-        hasProxyPrefetch;
+        (m.deliveryEvents && m.deliveryEvents.length > 0) ||
+        m.trackingEvents.length > 0;
 
-      let status = isDelivered ? 'DELIVERED' : 'SENT';
-      let confidence = isDelivered ? 'MEDIUM' : 'LOW';
-      let eventLabel = isDelivered
-        ? (hasProxyPrefetch ? 'Delivered (Verified by recipient mail server)' : 'Delivered to recipient inbox')
-        : 'Sent • Waiting for recipient';
+      let status = hasDelivery ? 'DELIVERED' : 'SENT';
+      let confidence = hasDelivery ? 'MEDIUM' : 'LOW';
+      let eventLabel = hasDelivery ? 'Delivered to recipient inbox' : 'Sent • Waiting for recipient';
 
       if (replyReceived) {
         status = 'REPLIED';
@@ -259,17 +256,12 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         status = 'CLICKED';
         confidence = 'CONFIRMED';
         eventLabel = `${uniqueClicks} unique click${uniqueClicks > 1 ? 's' : ''}`;
-      } else if (hasConfirmedOpen || hasHumanOpen || isRepeatedReading) {
+      } else if (hasOpen) {
         status = 'OPENED';
         confidence = hasConfirmedOpen ? 'CONFIRMED' : 'HIGH';
         eventLabel = hasConfirmedOpen ? 'Confirmed view' : 'Opened by recipient';
       }
 
-      const openEvents = validOpenEvents.filter(
-        (e) =>
-          e.type === TrackingEventType.CONFIRMED_EMAIL_VIEW ||
-          (!e.isProxy && e.type === TrackingEventType.PROBABLE_EMAIL_OPEN)
-      );
       const totalOpensCount = openEvents.length;
       const latestEvent = m.trackingEvents[0];
 

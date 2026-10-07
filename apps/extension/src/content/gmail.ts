@@ -385,10 +385,36 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
 
 const BLANK_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
+function isSentContext(container?: Element | null): boolean {
+  try {
+    const hash = (window.location.hash || '').toLowerCase();
+    if (hash.includes('sent')) return true;
+    if (container) {
+      const msgContainer = container.closest?.('div[role="listitem"], .adn, .h7');
+      if (msgContainer) {
+        const senderEl = msgContainer.querySelector('.gD, span.go, span.g2');
+        const senderTxt = (senderEl?.textContent || '').trim().toLowerCase();
+        if (senderTxt === 'me' || senderTxt.startsWith('me ')) {
+          return true;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
 function neutralizePixels(container: Element = document.body): void {
   try {
     const isCompose = Boolean(container.closest?.('[contenteditable="true"], [role="dialog"], .Am.Al.editable, div[aria-label*="Message Body"]'));
     if (isCompose) return;
+
+    // Only neutralize in Sent context (Sent folder / sent messages)
+    // When viewing Inbox or incoming emails, leave pixels untouched so recipient opens work!
+    if (!isSentContext(container)) {
+      return;
+    }
 
     const imgs = container.tagName === 'IMG'
       ? [container as HTMLImageElement]

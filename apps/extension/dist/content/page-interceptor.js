@@ -2,9 +2,11 @@
 /**
  * MailTrace Page Interceptor (Runs in page MAIN world at document_start)
  *
- * Purpose: Completely suppress sender self-opens when viewing sent emails in Gmail.
+ * Purpose: Suppress sender self-opens when viewing sent emails in Gmail.
  * Neutralizes tracking pixels BEFORE the browser initiates any network request
- * to Google's Image Proxy (ci*.googleusercontent.com) or backend tracking endpoints.
+ * to Google's Image Proxy (ci*.googleusercontent.com) or backend tracking endpoints,
+ * strictly when viewing the Sent folder or sent messages.
+ * Does NOT block or suppress tracking pixels when viewing the Inbox or incoming emails.
  */
 (function () {
     const BLANK_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
@@ -35,6 +37,30 @@
         }
         return false;
     }
+    function isSentContext(el) {
+        try {
+            const hash = (window.location.hash || '').toLowerCase();
+            // 1. Current view is Sent folder or Sent thread
+            if (hash.includes('sent')) {
+                return true;
+            }
+            // 2. Element is inside a sent message container
+            if (el) {
+                const msgContainer = el.closest('div[role="listitem"], .adn, .h7');
+                if (msgContainer) {
+                    const senderEl = msgContainer.querySelector('.gD, span.go, span.g2');
+                    const senderTxt = (senderEl?.textContent || '').trim().toLowerCase();
+                    if (senderTxt === 'me' || senderTxt.startsWith('me ')) {
+                        return true;
+                    }
+                }
+            }
+        }
+        catch {
+            // Ignore context checking errors
+        }
+        return false;
+    }
     function sanitizeHtmlString(html) {
         if (!html || typeof html !== 'string')
             return html;
@@ -54,7 +80,7 @@
         const origSet = innerHTMLDesc.set;
         Object.defineProperty(Element.prototype, 'innerHTML', {
             set: function (val) {
-                if (typeof val === 'string' && !isComposeContext(this)) {
+                if (typeof val === 'string' && !isComposeContext(this) && isSentContext(this)) {
                     val = sanitizeHtmlString(val);
                 }
                 return origSet.call(this, val);
@@ -73,7 +99,7 @@
         const origSrcSet = srcDesc.set;
         Object.defineProperty(imgProto, 'src', {
             set: function (val) {
-                if (typeof val === 'string' && isTrackingUrl(val) && !isComposeContext(this)) {
+                if (typeof val === 'string' && isTrackingUrl(val) && !isComposeContext(this) && isSentContext(this)) {
                     return origSrcSet.call(this, BLANK_PIXEL);
                 }
                 return origSrcSet.call(this, val);
@@ -89,7 +115,7 @@
     const origSetAttr = Element.prototype.setAttribute;
     Element.prototype.setAttribute = function (name, value) {
         if (typeof name === 'string' && name.toLowerCase() === 'src' && typeof value === 'string') {
-            if (isTrackingUrl(value) && !isComposeContext(this)) {
+            if (isTrackingUrl(value) && !isComposeContext(this) && isSentContext(this)) {
                 return origSetAttr.call(this, name, BLANK_PIXEL);
             }
         }
@@ -99,7 +125,7 @@
     if (typeof DOMParser !== 'undefined') {
         const origParse = DOMParser.prototype.parseFromString;
         DOMParser.prototype.parseFromString = function (str, type) {
-            if (typeof str === 'string') {
+            if (typeof str === 'string' && isSentContext()) {
                 str = sanitizeHtmlString(str);
             }
             return origParse.call(this, str, type);
@@ -109,11 +135,11 @@
     if (typeof Range !== 'undefined' && Range.prototype.createContextualFragment) {
         const origFragment = Range.prototype.createContextualFragment;
         Range.prototype.createContextualFragment = function (tagString) {
-            if (typeof tagString === 'string') {
+            if (typeof tagString === 'string' && isSentContext()) {
                 tagString = sanitizeHtmlString(tagString);
             }
             return origFragment.call(this, tagString);
         };
     }
-    console.log('[MailTrace] Page interceptor initialized: Sender self-open suppression active.');
+    console.log('[MailTrace] Page interceptor initialized: Sender self-open suppression active for sent mail.');
 })();

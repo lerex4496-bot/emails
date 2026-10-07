@@ -94,18 +94,15 @@ export async function processTrackingPayload(data: TrackingJobPayload): Promise<
 
     if (!recipient) return;
 
-    // Sender self-open & outbound transit filter:
-    // If the tracking pixel is requested within 15 seconds of message creation/dispatch,
-    // it was fetched by the sender's own compose window (when appending the <img> to DOM)
-    // or by Gmail's outbound pre-send scanner. Drop it to prevent false opens!
+    // Sender self-open & compose DOM insertion filter:
+    // If the tracking pixel is requested within 3 seconds of message send,
+    // it was fetched during compose DOM insertion or pre-send scan.
+    // Rather than dropping it, record it as automated diagnostic so no events are lost.
     const eventTimestamp = new Date(data.timestamp || Date.now());
     const sendTime = recipient.message?.sentAt || recipient.message?.createdAt;
     let elapsedSinceSend = 999999;
     if (sendTime) {
       elapsedSinceSend = eventTimestamp.getTime() - new Date(sendTime).getTime();
-      if (elapsedSinceSend < 15000) {
-        return;
-      }
     }
 
     const ua = data.userAgent || '';
@@ -116,14 +113,20 @@ export async function processTrackingPayload(data: TrackingJobPayload): Promise<
     let classification = Classification.PROBABLE_HUMAN;
     let eventType = TrackingEventType.PROBABLE_EMAIL_OPEN;
 
-    // Detect known proxy signatures
-    if (ua.includes(KNOWN_PROXY_SIGNATURES.GOOGLE_IMAGE_PROXY)) {
+    const isEarlyTransit = elapsedSinceSend < 3000;
+    if (isEarlyTransit) {
+      confidence = ConfidenceLevel.LOW;
+      classification = Classification.LIKELY_AUTOMATED;
+      eventType = TrackingEventType.TRACKING_RESOURCE_REQUESTED;
+    } else if (ua.includes(KNOWN_PROXY_SIGNATURES.GOOGLE_IMAGE_PROXY)) {
+      // Google Image Proxy fetches when a recipient opens the email in Gmail
       isProxy = true;
       proxyType = 'GOOGLE_IMAGE_PROXY';
-      confidence = ConfidenceLevel.MEDIUM;
-      classification = Classification.POSSIBLE_HUMAN;
-      eventType = TrackingEventType.POSSIBLE_EMAIL_OPEN;
+      confidence = ConfidenceLevel.HIGH;
+      classification = Classification.PROBABLE_HUMAN;
+      eventType = TrackingEventType.PROBABLE_EMAIL_OPEN;
     } else if (ua.includes(KNOWN_PROXY_SIGNATURES.APPLE_MPP)) {
+      // Apple Mail Privacy Protection prefetch / proxy fetch
       isProxy = true;
       proxyType = 'APPLE_MPP';
       confidence = ConfidenceLevel.MEDIUM;
