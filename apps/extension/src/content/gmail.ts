@@ -295,6 +295,7 @@ function injectStyles(): void {
 // Cached tracking status from API
 interface StatusItem {
   messageId: string;
+  openTrackingToken?: string | null;
   subject: string;
   recipientEmail: string;
   sentAt: string;
@@ -373,6 +374,13 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
       if (response && response.success && Array.isArray(response.statuses)) {
         cachedStatuses = response.statuses;
         lastStatusFetch = now;
+        const tokens: string[] = [];
+        response.statuses.forEach((s: any) => {
+          if (s.openTrackingToken) tokens.push(s.openTrackingToken);
+        });
+        if (tokens.length > 0) {
+          recordSentTokens(tokens);
+        }
       }
     } catch {
       // Ignore transient network errors
@@ -384,6 +392,82 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
 }
 
 const BLANK_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+// Persistent registry of tokens sent by this user
+const sentTokens = new Set<string>();
+
+function loadSavedTokens(): void {
+  try {
+    const raw = localStorage.getItem('mailtrace_sent_tokens');
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        arr.forEach((t) => { if (typeof t === 'string') sentTokens.add(t); });
+      }
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+loadSavedTokens();
+
+function recordSentToken(token: string): void {
+  if (!token || typeof token !== 'string') return;
+  try {
+    sentTokens.add(token);
+    const serialized = JSON.stringify(Array.from(sentTokens));
+    localStorage.setItem('mailtrace_sent_tokens', serialized);
+    window.dispatchEvent(new CustomEvent('mailtrace:add-sent-token', { detail: token }));
+    document.documentElement?.setAttribute('data-mailtrace-tokens', serialized);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function recordSentTokens(tokens: string[]): void {
+  if (!Array.isArray(tokens) || tokens.length === 0) return;
+  try {
+    let changed = false;
+    tokens.forEach((t) => {
+      if (t && typeof t === 'string' && !sentTokens.has(t)) {
+        sentTokens.add(t);
+        changed = true;
+      }
+    });
+    if (changed) {
+      const serialized = JSON.stringify(Array.from(sentTokens));
+      localStorage.setItem('mailtrace_sent_tokens', serialized);
+      window.dispatchEvent(new CustomEvent('mailtrace:add-sent-tokens', { detail: tokens }));
+      document.documentElement?.setAttribute('data-mailtrace-tokens', serialized);
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function extractToken(url: string | null | undefined): string | null {
+  if (!url || typeof url !== 'string') return null;
+  try {
+    const decoded = decodeURIComponent(url);
+    const match = decoded.match(/\/t\/open\/([a-zA-Z0-9_-]+)/);
+    if (match) {
+      return match[1].replace(/\.png$/i, '');
+    }
+  } catch {}
+  const match = url.match(/\/t\/open\/([a-zA-Z0-9_-]+)/);
+  if (match) {
+    return match[1].replace(/\.png$/i, '');
+  }
+  return null;
+}
+
+function isSentToken(token: string | null | undefined): boolean {
+  if (!token) return false;
+  if (sentTokens.has(token)) return true;
+  loadSavedTokens();
+  return sentTokens.has(token);
+}
 
 function isSentContext(container?: Element | null): boolean {
   try {
@@ -410,12 +494,6 @@ function neutralizePixels(container: Element = document.body): void {
     const isCompose = Boolean(container.closest?.('[contenteditable="true"], [role="dialog"], .Am.Al.editable, div[aria-label*="Message Body"]'));
     if (isCompose) return;
 
-    // Only neutralize in Sent context (Sent folder / sent messages)
-    // When viewing Inbox or incoming emails, leave pixels untouched so recipient opens work!
-    if (!isSentContext(container)) {
-      return;
-    }
-
     const imgs = container.tagName === 'IMG'
       ? [container as HTMLImageElement]
       : Array.from(container.querySelectorAll<HTMLImageElement>('img'));
@@ -425,12 +503,27 @@ function neutralizePixels(container: Element = document.body): void {
       if (inCompose) return;
 
       const src = img.getAttribute('src') || img.src || '';
-      if (src.includes('/t/open/') || src.includes('mailtrace-api') || src.includes('data-mailtrace-pixel')) {
+      const token = extractToken(src);
+
+      // 1. Sent Token Match: If token was sent by this user, suppress regardless of folder view!
+      if (token && isSentToken(token)) {
         img.src = BLANK_PIXEL;
         img.setAttribute('src', BLANK_PIXEL);
         img.setAttribute('data-mailtrace-suppressed', 'true');
         img.style.display = 'none';
         img.remove();
+        return;
+      }
+
+      // 2. Sent Context Match: Sent folder or sender is 'me'
+      if (isSentContext(img)) {
+        if (src.includes('/t/open/') || src.includes('mailtrace-api') || src.includes('data-mailtrace-pixel')) {
+          img.src = BLANK_PIXEL;
+          img.setAttribute('src', BLANK_PIXEL);
+          img.setAttribute('data-mailtrace-suppressed', 'true');
+          img.style.display = 'none';
+          img.remove();
+        }
       }
     });
   } catch {
@@ -781,6 +874,9 @@ async function injectTrackingIntoCompose(dialog: HTMLElement): Promise<void> {
       });
       if (resp && resp.success && resp.data) {
         trackingData = resp.data;
+        if (trackingData.openToken) {
+          recordSentToken(trackingData.openToken);
+        }
       }
     } catch {
       // Extension context invalidated
