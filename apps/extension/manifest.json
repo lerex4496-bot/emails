@@ -5,7 +5,9 @@
   "description": "First-party webmail companion for MailTrace tracking telemetry and confirmed views.",
   "permissions": [
     "storage",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "scripting",
+    "tabs"
   ],
   "declarative_net_request": {
     "rule_resources": [

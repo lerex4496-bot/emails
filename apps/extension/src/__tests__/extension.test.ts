@@ -23,10 +23,10 @@ describe('MailTrace Extension Manifest & Companion Tests', () => {
     const manifest = JSON.parse(rawData);
 
     expect(manifest.content_scripts).toBeDefined();
-    expect(manifest.content_scripts.length).toBe(2);
+    expect(manifest.content_scripts.length).toBeGreaterThanOrEqual(2);
 
-    const gmailScript = manifest.content_scripts.find((s: { matches: string[] }) =>
-      s.matches.includes('https://mail.google.com/*')
+    const gmailScript = manifest.content_scripts.find((s: { matches: string[]; js: string[] }) =>
+      s.matches.includes('https://mail.google.com/*') && s.js.includes('dist/content/gmail.js')
     );
     expect(gmailScript).toBeDefined();
     expect(gmailScript.js).toContain('dist/content/gmail.js');

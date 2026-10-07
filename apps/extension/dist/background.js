@@ -119,3 +119,28 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
         return true;
     }
 });
+// Auto-inject content script into open Gmail tabs upon install or extension reload
+if (typeof chrome !== 'undefined' && chrome.runtime?.onInstalled) {
+    chrome.runtime.onInstalled.addListener(() => {
+        refreshConfig();
+        try {
+            if (chrome.tabs && chrome.scripting) {
+                chrome.tabs.query({ url: '*://mail.google.com/*' }, (tabs) => {
+                    for (const tab of tabs) {
+                        if (tab.id) {
+                            chrome.scripting.executeScript({
+                                target: { tabId: tab.id },
+                                files: ['dist/content/gmail.js'],
+                            }).catch((err) => {
+                                console.debug('[MailTrace Background] Tab auto-inject notice:', err);
+                            });
+                        }
+                    }
+                });
+            }
+        }
+        catch (e) {
+            console.debug('[MailTrace Background] onInstalled error:', e);
+        }
+    });
+}

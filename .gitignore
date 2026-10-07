@@ -13,3 +13,15 @@ target/
 .gradle/
 *.apk
 *.aab
+_metadata/
+apps/extension/_metadata/
+test_*.js
+test_*.ts
+check_*.js
+check_*.ts
+check-*.ts
+inspect_*.js
+inspect_*.ts
+prepare_tracking_response.json
+render_status.json
+scripts/

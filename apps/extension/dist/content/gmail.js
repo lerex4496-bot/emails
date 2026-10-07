@@ -63,8 +63,9 @@ function injectStyles() {
       align-items: center !important;
       justify-content: center !important;
       gap: 5px !important;
-      padding: 3px 10px !important;
-      margin: 0 !important;
+      padding: 0 12px !important;
+      margin-left: 8px !important;
+      margin-right: 4px !important;
       border-radius: 16px !important;
       font-size: 11px !important;
       font-weight: 700 !important;
@@ -72,26 +73,25 @@ function injectStyles() {
       cursor: pointer !important;
       user-select: none !important;
       transition: all 0.15s ease-in-out !important;
-      border: 1.5px solid #2563eb !important;
-      background: #eff6ff !important;
-      color: #1d4ed8 !important;
+      border: 1px solid #1d4ed8 !important;
+      background: #1a73e8 !important;
+      color: #ffffff !important;
       vertical-align: middle !important;
-      height: 28px !important;
-      min-width: 90px !important;
-      margin: 0 4px !important;
+      height: 32px !important;
+      min-width: 95px !important;
       line-height: 1 !important;
       box-sizing: border-box !important;
       position: relative !important;
       z-index: 100 !important;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25) !important;
       white-space: nowrap !important;
       visibility: visible !important;
       opacity: 1 !important;
     }
     .mailtrace-toggle-btn.off {
-      background: #334155 !important;
-      border-color: #64748b !important;
-      color: #cbd5e1 !important;
+      background: #374151 !important;
+      border-color: #4b5563 !important;
+      color: #d1d5db !important;
     }
     .mailtrace-toggle-btn:hover {
       opacity: 0.9 !important;
@@ -410,18 +410,31 @@ function findSendButton(container) {
     }
     return null;
 }
+// Find the true compose container holding message body and subject for a given Send button
+function findComposeRootForSendButton(sendBtn) {
+    // 1. Direct closest checks for standard Gmail compose containers
+    const dialog = sendBtn.closest('div[role="dialog"], div.AD, div.M9, div.aoI, div.inboxsdk__compose, form');
+    if (dialog && dialog.querySelector('div[role="textbox"], .Am.Al.editable, div[aria-label*="Message Body"], input[name="subjectbox"]')) {
+        return dialog;
+    }
+    // 2. Walk up ancestor chain to find the nearest container that holds the message body or subject box
+    let cur = sendBtn.parentElement;
+    while (cur && cur !== document.body) {
+        if (cur.querySelector('div[role="textbox"], .Am.Al.editable, div[aria-label*="Message Body"], input[name="subjectbox"]')) {
+            return cur;
+        }
+        cur = cur.parentElement;
+    }
+    return document.body;
+}
 // Hook a specific Send button with the native MailTrace tracking toggle
-function hookSendButton(sendBtn, dialogContainer) {
-    // Check if this send button or its immediate container already has a MailTrace toggle
-    const rowContainer = sendBtn.closest('tr.btC, .btA, [role="toolbar"]') || sendBtn.parentElement;
-    if (rowContainer && rowContainer.querySelector('.mailtrace-toggle-btn'))
+function hookSendButton(sendBtn) {
+    // Check if this specific send button or its immediate toolbar row already has a toggle
+    const toolbar = sendBtn.closest('tr.btC, .btA, [role="toolbar"], td.gU, .dC') || sendBtn.parentElement;
+    if (toolbar && toolbar.querySelector('.mailtrace-toggle-btn')) {
         return;
-    // Determine compose root
-    const composeRoot = dialogContainer ||
-        sendBtn.closest('div[role="dialog"], div.AD, div.M9, div[role="region"], table.cf.An, div.inboxsdk__compose, form, div.aoI') ||
-        sendBtn.closest('div.nH.Hd') ||
-        document.body;
-    if (composeRoot && composeRoot !== document.body && composeRoot.querySelector('.mailtrace-toggle-btn')) {
+    }
+    if (sendBtn.parentElement?.querySelector('.mailtrace-toggle-btn')) {
         return;
     }
     // Create Toggle Button
@@ -446,19 +459,17 @@ function hookSendButton(sendBtn, dialogContainer) {
             : '<span>⚪</span> <span>Track: OFF</span>';
     });
     // Where to insert:
-    // 1. Table cell insertion (standard Gmail compose toolbar is a <table class="cf An"><tr class="btC">...</tr></table>)
-    const sendTd = sendBtn.closest('td.gU.Up, td.gU, td');
-    if (sendTd && sendTd.parentElement && sendTd.parentElement.tagName === 'TR') {
-        const toggleCell = document.createElement('td');
-        toggleCell.className = 'gU mailtrace-toggle-cell';
-        toggleCell.style.cssText = 'vertical-align: middle !important; padding: 0 4px !important; display: table-cell !important; width: auto !important;';
-        toggleCell.appendChild(btn);
-        sendTd.insertAdjacentElement('afterend', toggleCell);
+    // Primary: Directly next to the Send button wrapper (.dC) in the same toolbar cell
+    const sendWrapper = sendBtn.closest('.dC') || sendBtn;
+    if (sendWrapper.parentElement) {
+        sendWrapper.parentElement.insertBefore(btn, sendWrapper.nextSibling);
     }
     else {
-        // 2. Fallback for non-table layouts (inline reply, flex divs)
-        const sendWrapper = sendBtn.closest('.dC') || sendBtn;
-        sendWrapper.insertAdjacentElement('afterend', btn);
+        sendBtn.insertAdjacentElement('afterend', btn);
+    }
+    // Fallback: If for any reason insertion didn't connect to DOM, attach to parent
+    if (!btn.isConnected && sendBtn.parentElement) {
+        sendBtn.parentElement.appendChild(btn);
     }
     // Intercept Send Button & Ctrl+Enter with reliable race-condition prevention
     if (!sendBtn.getAttribute('data-mailtrace-hooked')) {
@@ -482,6 +493,7 @@ function hookSendButton(sendBtn, dialogContainer) {
             isInjecting = true;
             btn.innerHTML = '<span>⏳</span> <span>Tracking...</span>';
             try {
+                const composeRoot = findComposeRootForSendButton(sendBtn);
                 await injectTrackingIntoCompose(composeRoot);
             }
             catch (err) {
@@ -495,6 +507,7 @@ function hookSendButton(sendBtn, dialogContainer) {
             }
         };
         sendBtn.addEventListener('click', triggerTrackedSend, true);
+        const composeRoot = findComposeRootForSendButton(sendBtn);
         composeRoot.addEventListener('keydown', (e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
                 triggerTrackedSend(e);
@@ -504,27 +517,39 @@ function hookSendButton(sendBtn, dialogContainer) {
 }
 // 1. Hook into Gmail Compose Window (Standard, Docked, Fullscreen, and Inline)
 function observeComposeWindows() {
-    // 1. Direct search for all Send buttons in document
-    const sendBtns = document.querySelectorAll('.aoO, .T-I-atl, div[role="button"][data-tooltip*="Send"], div[aria-label*="Send"], div[data-tooltip^="Send"]');
-    sendBtns.forEach((sendBtn) => {
+    const sendSelectors = [
+        '.aoO',
+        '.T-I-atl',
+        'div[role="button"][data-tooltip*="Send"]',
+        'div[role="button"][aria-label*="Send"]',
+        'div[data-tooltip^="Send"]',
+        'div[aria-label^="Send"]',
+    ];
+    const foundBtns = new Set();
+    // 1. Direct search for all Send buttons across the document
+    document.querySelectorAll(sendSelectors.join(', ')).forEach((el) => {
+        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+        const tooltip = (el.getAttribute('data-tooltip') || '').toLowerCase();
+        if (aria.includes('more send options') || tooltip.includes('more send options')) {
+            return;
+        }
+        foundBtns.add(el);
+    });
+    // 2. Also search all compose dialogs
+    const composeDialogs = document.querySelectorAll('div[role="dialog"], div.AD, div.M9, div.aoI, div.inboxsdk__compose');
+    composeDialogs.forEach((dialog) => {
+        const sendBtn = findSendButton(dialog);
+        if (sendBtn) {
+            foundBtns.add(sendBtn);
+        }
+    });
+    // Hook all unique Send buttons found
+    foundBtns.forEach((sendBtn) => {
         try {
             hookSendButton(sendBtn);
         }
         catch (e) {
             console.debug('[MailTrace] SendBtn hook error:', e);
-        }
-    });
-    // 2. Also search all compose dialogs
-    const composeDialogs = document.querySelectorAll('div[role="dialog"], div[role="region"], div.M9, div.AD, div.inboxsdk__compose, table.cf.An, div[aria-label*="Compose"], div[aria-label*="New Message"], div.nH.Hd');
-    composeDialogs.forEach((dialog) => {
-        try {
-            const sendBtn = findSendButton(dialog);
-            if (sendBtn) {
-                hookSendButton(sendBtn, dialog);
-            }
-        }
-        catch (e) {
-            console.debug('[MailTrace] Dialog hook error:', e);
         }
     });
 }
@@ -1094,11 +1119,11 @@ function initializeGmailCompanion() {
         }, 200);
     });
     observer.observe(document.body, { childList: true, subtree: true });
-    // Refresh status map AND re-check compose windows every 3 seconds
+    // Refresh status map AND re-check compose windows every 1.2 seconds
     pollInterval = setInterval(() => {
         safeRefreshBadges();
         observeComposeWindows();
-    }, 3000);
+    }, 1200);
 }
 if (typeof document !== 'undefined') {
     if (document.readyState === 'loading') {
