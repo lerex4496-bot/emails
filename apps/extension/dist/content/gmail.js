@@ -598,17 +598,22 @@ function observeComposeWindows() {
         }
     });
 }
-// Inject tracking pixel and rewrite links in Compose Body
 async function injectTrackingIntoCompose(dialog) {
     const composeRoot = dialog || document.body;
-    const bodyEl = composeRoot.querySelector('div[aria-label*="Message Body"], div[role="textbox"], div[contenteditable="true"], .Am.Al.editable, div[aria-label*="Body"]');
+    let bodyEl = composeRoot.querySelector('div[aria-label*="Message Body"], div[role="textbox"], div[contenteditable="true"], .Am.Al.editable, div[aria-label*="Body"]');
+    if (!bodyEl) {
+        bodyEl = document.querySelector('div[role="dialog"] div[role="textbox"], div.AD div[role="textbox"], div.M9 div[role="textbox"], .Am.Al.editable');
+    }
     if (!bodyEl)
         return;
-    // Prevent duplicate pixel injection
-    if (bodyEl.querySelector('[data-mailtrace-pixel="true"]'))
-        return;
+    // Clear any existing / stale pixels from previous drafts or edits so every send gets a fresh active token
+    const existingPixels = bodyEl.querySelectorAll('[data-mailtrace-pixel="true"], img[src*="/t/open/"]');
+    existingPixels.forEach((p) => p.remove());
     // Extract Subject
-    const subjectInput = composeRoot.querySelector('input[name="subjectbox"], input[placeholder*="Subject"], input[aria-label*="Subject"]');
+    let subjectInput = composeRoot.querySelector('input[name="subjectbox"], input[placeholder*="Subject"], input[aria-label*="Subject"]');
+    if (!subjectInput) {
+        subjectInput = document.querySelector('input[name="subjectbox"], input[placeholder*="Subject"], input[aria-label*="Subject"]');
+    }
     const rawSubject = subjectInput?.value?.trim();
     const subject = rawSubject || '(no subject)';
     // Extract Recipient(s)
@@ -624,7 +629,8 @@ async function injectTrackingIntoCompose(dialog) {
         }
     });
     if (toList.length === 0) {
-        const fallbackTo = composeRoot.querySelector('input[name="to"]');
+        const fallbackTo = composeRoot.querySelector('input[name="to"]') ||
+            document.querySelector('input[name="to"]');
         if (fallbackTo?.value && fallbackTo.value.includes('@')) {
             toList.push({ email: fallbackTo.value.trim() });
         }

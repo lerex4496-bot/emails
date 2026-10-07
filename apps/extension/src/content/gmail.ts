@@ -655,21 +655,31 @@ function observeComposeWindows(): void {
   });
 }
 
-// Inject tracking pixel and rewrite links in Compose Body
 async function injectTrackingIntoCompose(dialog: HTMLElement): Promise<void> {
   const composeRoot = dialog || document.body;
-  const bodyEl = composeRoot.querySelector<HTMLElement>(
+  let bodyEl = composeRoot.querySelector<HTMLElement>(
     'div[aria-label*="Message Body"], div[role="textbox"], div[contenteditable="true"], .Am.Al.editable, div[aria-label*="Body"]'
   );
+  if (!bodyEl) {
+    bodyEl = document.querySelector<HTMLElement>(
+      'div[role="dialog"] div[role="textbox"], div.AD div[role="textbox"], div.M9 div[role="textbox"], .Am.Al.editable'
+    );
+  }
   if (!bodyEl) return;
 
-  // Prevent duplicate pixel injection
-  if (bodyEl.querySelector('[data-mailtrace-pixel="true"]')) return;
+  // Clear any existing / stale pixels from previous drafts or edits so every send gets a fresh active token
+  const existingPixels = bodyEl.querySelectorAll<HTMLElement>('[data-mailtrace-pixel="true"], img[src*="/t/open/"]');
+  existingPixels.forEach((p) => p.remove());
 
   // Extract Subject
-  const subjectInput = composeRoot.querySelector<HTMLInputElement>(
+  let subjectInput = composeRoot.querySelector<HTMLInputElement>(
     'input[name="subjectbox"], input[placeholder*="Subject"], input[aria-label*="Subject"]'
   );
+  if (!subjectInput) {
+    subjectInput = document.querySelector<HTMLInputElement>(
+      'input[name="subjectbox"], input[placeholder*="Subject"], input[aria-label*="Subject"]'
+    );
+  }
   const rawSubject = subjectInput?.value?.trim();
   const subject = rawSubject || '(no subject)';
 
@@ -690,7 +700,8 @@ async function injectTrackingIntoCompose(dialog: HTMLElement): Promise<void> {
   });
 
   if (toList.length === 0) {
-    const fallbackTo = composeRoot.querySelector<HTMLInputElement>('input[name="to"]');
+    const fallbackTo = composeRoot.querySelector<HTMLInputElement>('input[name="to"]') ||
+      document.querySelector<HTMLInputElement>('input[name="to"]');
     if (fallbackTo?.value && fallbackTo.value.includes('@')) {
       toList.push({ email: fallbackTo.value.trim() });
     }
