@@ -93,10 +93,15 @@
     function isTrackingUrl(url) {
         if (!url || typeof url !== 'string')
             return false;
-        return (url.includes('/t/open/') ||
-            url.includes('mailtrace-api') ||
-            url.includes('data-mailtrace-pixel') ||
-            (url.includes('googleusercontent.com/proxy') && (url.includes('/t/open/') || url.includes('mailtrace'))));
+        let decoded = url;
+        try {
+            decoded = decodeURIComponent(url);
+        }
+        catch { }
+        return (decoded.includes('/t/open/') ||
+            decoded.includes('mailtrace-api') ||
+            decoded.includes('data-mailtrace-pixel') ||
+            (decoded.includes('googleusercontent.com/proxy') && (decoded.includes('/t/open/') || decoded.includes('mailtrace'))));
     }
     function isComposeContext(el) {
         if (!el)
@@ -270,6 +275,66 @@
             }
             return origFetch.apply(this, arguments);
         };
+    }
+    // 7. Intercept Element.prototype.insertAdjacentHTML
+    if (typeof Element !== 'undefined' && Element.prototype.insertAdjacentHTML) {
+        const origInsertAdjacentHTML = Element.prototype.insertAdjacentHTML;
+        Element.prototype.insertAdjacentHTML = function (position, text) {
+            if (typeof text === 'string' && !isComposeContext(this)) {
+                text = sanitizeHtmlString(text, this);
+            }
+            return origInsertAdjacentHTML.call(this, position, text);
+        };
+    }
+    // 8. Intercept XMLHttpRequest for tracking URLs with sent tokens
+    if (typeof XMLHttpRequest !== 'undefined') {
+        const origOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+            const urlStr = typeof url === 'string' ? url : (url ? url.toString() : '');
+            const targetUrl = shouldSuppress(urlStr, null) ? BLANK_PIXEL : url;
+            return origOpen.apply(this, [method, targetUrl, ...rest]);
+        };
+    }
+    // 9. MutationObserver: Asynchronous DOM guard for any dynamic <img> injections
+    function checkAndNeutralizeImage(img) {
+        if (isComposeContext(img))
+            return;
+        const src = img.getAttribute('src') || img.src || '';
+        if (shouldSuppress(src, img)) {
+            img.src = BLANK_PIXEL;
+            img.setAttribute('src', BLANK_PIXEL);
+            img.setAttribute('data-mailtrace-suppressed', 'true');
+            img.style.display = 'none';
+            img.remove();
+        }
+    }
+    const observer = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+            for (const node of Array.from(m.addedNodes)) {
+                if (node.nodeType === Node.ELEMENT_NODE) {
+                    const el = node;
+                    if (el.tagName === 'IMG') {
+                        checkAndNeutralizeImage(el);
+                    }
+                    else {
+                        const imgs = el.querySelectorAll?.('img');
+                        if (imgs && imgs.length > 0) {
+                            imgs.forEach((img) => checkAndNeutralizeImage(img));
+                        }
+                    }
+                }
+            }
+        }
+    });
+    if (document.documentElement) {
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
+    else {
+        document.addEventListener('DOMContentLoaded', () => {
+            if (document.documentElement) {
+                observer.observe(document.documentElement, { childList: true, subtree: true });
+            }
+        });
     }
     console.log('[MailTrace] Page interceptor initialized: Sender self-open suppression active with token registry.');
 })();
