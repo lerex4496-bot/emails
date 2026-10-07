@@ -397,7 +397,8 @@ function recordSentToken(token) {
         sentTokens.add(token);
         const serialized = JSON.stringify(Array.from(sentTokens));
         localStorage.setItem('mailtrace_sent_tokens', serialized);
-        window.dispatchEvent(new CustomEvent('mailtrace:add-sent-token', { detail: token }));
+        window.postMessage({ source: 'MAILTRACE_EXTENSION', action: 'ADD_SENT_TOKENS', tokens: [token] }, '*');
+        document.dispatchEvent(new CustomEvent('mailtrace:add-sent-token', { detail: token }));
         document.documentElement?.setAttribute('data-mailtrace-tokens', serialized);
     }
     catch {
@@ -418,7 +419,8 @@ function recordSentTokens(tokens) {
         if (changed) {
             const serialized = JSON.stringify(Array.from(sentTokens));
             localStorage.setItem('mailtrace_sent_tokens', serialized);
-            window.dispatchEvent(new CustomEvent('mailtrace:add-sent-tokens', { detail: tokens }));
+            window.postMessage({ source: 'MAILTRACE_EXTENSION', action: 'ADD_SENT_TOKENS', tokens }, '*');
+            document.dispatchEvent(new CustomEvent('mailtrace:add-sent-tokens', { detail: tokens }));
             document.documentElement?.setAttribute('data-mailtrace-tokens', serialized);
         }
     }
@@ -503,6 +505,19 @@ function neutralizePixels(container = document.body) {
                     img.setAttribute('data-mailtrace-suppressed', 'true');
                     img.style.display = 'none';
                     img.remove();
+                    return;
+                }
+            }
+            // 3. Non-Inbox Match: In any sent view, all mail, or preview outside of inbox
+            const hash = (window.location.hash || '').toLowerCase();
+            if (!hash.includes('inbox')) {
+                if (src.includes('/t/open/') || src.includes('mailtrace-api') || src.includes('data-mailtrace-pixel')) {
+                    img.src = BLANK_PIXEL;
+                    img.setAttribute('src', BLANK_PIXEL);
+                    img.setAttribute('data-mailtrace-suppressed', 'true');
+                    img.style.display = 'none';
+                    img.remove();
+                    return;
                 }
             }
         });

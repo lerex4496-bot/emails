@@ -94,9 +94,9 @@ export async function processTrackingPayload(data: TrackingJobPayload): Promise<
 
     if (!recipient) return;
 
-    // Sender self-open & transit buffer filter:
-    // If the tracking pixel is requested within 15 seconds of message send,
-    // it was fetched during compose DOM insertion, sender preview, or transit buffer.
+    // Sender self-open & transit/prefetch buffer filter:
+    // If the tracking pixel is requested within 60 seconds of message send,
+    // it was fetched during compose DOM insertion, sender preview, or Google delivery scanning.
     // Rather than marking as human open, record it as automated diagnostic (DELIVERED status).
     const eventTimestamp = new Date(data.timestamp || Date.now());
     const sendTime = recipient.message?.sentAt || recipient.message?.createdAt;
@@ -113,7 +113,7 @@ export async function processTrackingPayload(data: TrackingJobPayload): Promise<
     let classification = Classification.PROBABLE_HUMAN;
     let eventType = TrackingEventType.PROBABLE_EMAIL_OPEN;
 
-    const isEarlyTransit = elapsedSinceSend < 15000;
+    const isEarlyTransit = elapsedSinceSend < 60000;
     if (isEarlyTransit) {
       confidence = ConfidenceLevel.LOW;
       classification = Classification.LIKELY_AUTOMATED;

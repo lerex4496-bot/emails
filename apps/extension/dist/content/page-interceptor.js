@@ -41,13 +41,23 @@
         }
     }
     loadSavedTokens();
-    // Listen for tokens emitted from isolated world (gmail.ts)
-    window.addEventListener('mailtrace:add-sent-token', (e) => {
+    // 1. window message listener (crosses worlds reliably)
+    window.addEventListener('message', (event) => {
+        if (event && event.data && event.data.source === 'MAILTRACE_EXTENSION' && event.data.action === 'ADD_SENT_TOKENS') {
+            const tokens = event.data.tokens;
+            if (Array.isArray(tokens)) {
+                tokens.forEach((t) => { if (typeof t === 'string')
+                    sentTokens.add(t); });
+            }
+        }
+    });
+    // 2. DOM CustomEvent listeners on document (shared DOM node)
+    document.addEventListener('mailtrace:add-sent-token', (e) => {
         if (e && e.detail && typeof e.detail === 'string') {
             sentTokens.add(e.detail);
         }
     });
-    window.addEventListener('mailtrace:add-sent-tokens', (e) => {
+    document.addEventListener('mailtrace:add-sent-tokens', (e) => {
         if (e && e.detail && Array.isArray(e.detail)) {
             e.detail.forEach((t) => { if (typeof t === 'string')
                 sentTokens.add(t); });
@@ -145,7 +155,12 @@
         if (isSentContext(el)) {
             return true;
         }
-        // Check 3: If viewing any message in Gmail where the sender element is 'me'
+        // Check 3: If viewing any non-inbox view (sent folder, all mail, preview, search, drafts) -> always suppress
+        const hash = (window.location.hash || '').toLowerCase();
+        if (!hash.includes('inbox')) {
+            return true;
+        }
+        // Check 4: If viewing any message in Gmail where the sender element is 'me'
         if (el) {
             try {
                 const msgContainer = el.closest('div[role="listitem"], .adn, .h7');

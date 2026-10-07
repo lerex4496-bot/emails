@@ -215,12 +215,12 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         uniqueClicks += link.uniqueClicks;
       });
 
-      // Filter events occurring at least 15 seconds after sentAt (exclude compose DOM insertions, sender sent-folder preview, and transit buffering)
+      // Filter events occurring at least 60 seconds after sentAt (exclude compose DOM insertions, sender preview, and Google delivery prefetch scanning)
       const validOpenEvents = m.trackingEvents.filter((e) => {
         const sendTime = m.sentAt || m.createdAt;
         if (!sendTime) return false;
         const diff = new Date(e.timestamp).getTime() - new Date(sendTime).getTime();
-        return diff >= 15000;
+        return diff >= 60000;
       });
 
       // 1. Confirmed first-party open (client explicitly viewed message)
