@@ -88,7 +88,7 @@ export function formatEvidence(event: EventEvidenceInput): string {
     }
 
     if (proxy.toUpperCase().includes('GOOGLE')) {
-      return `Remote image requested via GoogleImageProxy cache servers (via: 1.1 google). Gmail prefetched image assets in background; indeterminate whether recipient opened message.`;
+      return `Remote image requested via GoogleImageProxy cache servers (via: 1.1 google). Note: GoogleImageProxy uses a synthetic User-Agent (Windows NT 5.1 / Firefox 11) for all requests worldwide to protect recipient privacy; actual device OS (e.g. Android phone, iPhone) is masked.`;
     }
 
     if (proxy.toUpperCase().includes('APPLE')) {

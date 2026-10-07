@@ -117,12 +117,17 @@ export const EventTimeline: React.FC<EventTimelineProps> = ({ events }) => {
               {evt.isProxy && (
                 <div className="p-2.5 rounded-lg bg-amber-50/70 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 text-[11px] border border-amber-200/80 dark:border-amber-900/50 flex items-start gap-2">
                   <ShieldCheck className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                  <div>
+                  <div className="w-full">
                     <span className="font-semibold">Proxy Signature: </span>
                     <span className="font-mono font-medium">{evt.proxyType || 'Generic Proxy'}</span>.
                     <span className="block text-slate-600 dark:text-slate-300 mt-0.5">
                       The mail service or security filter fetched remote assets through intermediate servers. Human recipient activity cannot be proven.
                     </span>
+                    {(evt.proxyType === 'GOOGLE_IMAGE_PROXY' || evt.userAgent?.includes('GoogleImageProxy')) && (
+                      <span className="block text-slate-700 dark:text-slate-200 mt-1.5 bg-amber-100/70 dark:bg-amber-900/40 p-2 rounded text-[10.5px] leading-relaxed border border-amber-300/50 dark:border-amber-800/50">
+                        💡 <strong>Why does the User-Agent show Windows NT 5.1 / Firefox 11?</strong> GoogleImageProxy uses a permanent synthetic user-agent string worldwide (Windows XP, Firefox 11) to intentionally mask the recipient&apos;s actual device (such as Android phone, iPhone, or Mac). The User-Agent is Google&apos;s proxy crawler identity, not the recipient&apos;s device OS.
+                      </span>
+                    )}
                   </div>
                 </div>
               )}
@@ -165,6 +170,11 @@ export const EventTimeline: React.FC<EventTimelineProps> = ({ events }) => {
                       <div>
                         <span className="text-slate-500 block">User-Agent:</span>
                         <span className="text-slate-300 break-all">{evt.userAgent}</span>
+                        {evt.userAgent.includes('GoogleImageProxy') && (
+                          <span className="text-amber-400/90 text-[9.5px] block mt-1 font-sans">
+                            ↳ Synthetic crawler identity used by Google to mask recipient operating systems (Android/iOS/PC).
+                          </span>
+                        )}
                       </div>
                     )}
                     {evt.classification && (

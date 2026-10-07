@@ -1,0 +1,23 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "*/t/open/*",
+      "initiatorDomains": [
+        "mail.google.com",
+        "outlook.live.com",
+        "outlook.office.com"
+      ],
+      "resourceTypes": [
+        "image",
+        "xmlhttprequest",
+        "sub_frame",
+        "other"
+      ]
+    }
+  }
+]

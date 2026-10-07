@@ -274,6 +274,20 @@ function injectStyles(): void {
     .mailtrace-tooltip:hover::after {
       opacity: 1;
     }
+    img[data-mailtrace-pixel],
+    img[data-mailtrace-suppressed],
+    img[src*="/t/open/"],
+    img[src*="mailtrace-api"],
+    img[src*="googleusercontent.com/proxy"][src*="/t/open/"] {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+      max-width: 0 !important;
+      max-height: 0 !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+      opacity: 0 !important;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -367,6 +381,35 @@ async function fetchTrackingStatuses(): Promise<StatusItem[]> {
 
   isFetchingStatuses = false;
   return cachedStatuses;
+}
+
+const BLANK_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+function neutralizePixels(container: Element = document.body): void {
+  try {
+    const isCompose = Boolean(container.closest?.('[contenteditable="true"], [role="dialog"], .Am.Al.editable, div[aria-label*="Message Body"]'));
+    if (isCompose) return;
+
+    const imgs = container.tagName === 'IMG'
+      ? [container as HTMLImageElement]
+      : Array.from(container.querySelectorAll<HTMLImageElement>('img'));
+
+    imgs.forEach((img) => {
+      const inCompose = Boolean(img.closest('[contenteditable="true"], [role="dialog"], .Am.Al.editable, div[aria-label*="Message Body"]'));
+      if (inCompose) return;
+
+      const src = img.getAttribute('src') || img.src || '';
+      if (src.includes('/t/open/') || src.includes('mailtrace-api') || src.includes('data-mailtrace-pixel')) {
+        img.src = BLANK_PIXEL;
+        img.setAttribute('src', BLANK_PIXEL);
+        img.setAttribute('data-mailtrace-suppressed', 'true');
+        img.style.display = 'none';
+        img.remove();
+      }
+    });
+  } catch {
+    // Ignore DOM query errors
+  }
 }
 
 function findSendButton(container: HTMLElement): HTMLElement | null {
@@ -572,10 +615,24 @@ async function injectTrackingIntoCompose(dialog: HTMLElement): Promise<void> {
     .map((a) => a.href)
     .filter((href) => href && href.startsWith('http') && !href.includes('/t/'));
 
+  // Extract Sender Email
+  let senderEmail: string | undefined = undefined;
+  const accountBtn = document.querySelector('a[aria-label*="Google Account"], a[aria-label*="Google account"]');
+  const accountLabel = accountBtn?.getAttribute('aria-label') || '';
+  const matchAcct = accountLabel.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+  if (matchAcct) {
+    senderEmail = matchAcct[1];
+  } else {
+    const fromEl = composeRoot.querySelector('input[name="from"], select[name="from"] option:checked, span[email]');
+    const fromEmail = fromEl?.getAttribute('email') || (fromEl as HTMLInputElement)?.value;
+    if (fromEmail && fromEmail.includes('@')) senderEmail = fromEmail.trim();
+  }
+
   const trackingPayload = {
     subject,
     to: toList.length > 0 ? toList : [{ email: 'recipient@example.com' }],
     links,
+    senderEmail,
     enableOpenTracking: true,
     enableClickTracking: links.length > 0,
   };
@@ -1027,18 +1084,27 @@ async function refreshBadges(): Promise<void> {
 
 // 4. Observe First-Party Thread Viewing
 function observeGmailThreads(): void {
-  // CRITICAL: NEVER report confirmed view when in Sent folder (#sent)
+  // Always neutralize any tracking pixels in viewed threads/messages
+  neutralizePixels();
+
+  // CRITICAL: NEVER report confirmed view when in Sent folder (#sent) or viewing sender's own mail
   // The sender viewing their own sent mail is NOT an open by the recipient!
   if (window.location.hash.includes('#sent')) {
-    const pixels = document.querySelectorAll<HTMLImageElement>(
-      'img[data-mailtrace-pixel="true"], img[src*="/t/open/"]'
-    );
-    pixels.forEach((img) => {
-      if (img.src && !img.src.startsWith('data:')) {
-        img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-      }
-    });
     return;
+  }
+
+  const mainView = document.querySelector('div[role="main"]');
+  if (mainView) {
+    // Check if the thread is an outgoing message from the sender
+    const fromEls = mainView.querySelectorAll('.gD, span.go, span.g2');
+    let isSelfSent = false;
+    fromEls.forEach((el) => {
+      const txt = (el.textContent || '').trim().toLowerCase();
+      if (txt === 'me' || txt.startsWith('me ')) isSelfSent = true;
+    });
+    if (isSelfSent) {
+      return;
+    }
   }
 
   const threadHeaders = document.querySelectorAll('h2[data-thread-perm-id]');
@@ -1084,6 +1150,20 @@ function initializeGmailCompanion(): void {
   if (!isExtensionValid()) return;
 
   injectStyles();
+  neutralizePixels();
+
+  // Fast synchronous observer to strip tracking pixels before network requests can fire
+  const fastObserver = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType === 1) {
+          neutralizePixels(node as Element);
+        }
+      }
+    }
+  });
+  fastObserver.observe(document.documentElement, { childList: true, subtree: true });
+
   observeComposeWindows();
   safeRefreshBadges();
   observeGmailThreads();
@@ -1093,6 +1173,7 @@ function initializeGmailCompanion(): void {
   const observer = new MutationObserver(() => {
     if (!isExtensionValid()) {
       observer.disconnect();
+      fastObserver.disconnect();
       if (pollInterval) {
         clearInterval(pollInterval);
         pollInterval = null;

@@ -239,14 +239,25 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         (e) => e.isProxy || e.type === TrackingEventType.POSSIBLE_EMAIL_OPEN || e.type === TrackingEventType.TRACKING_RESOURCE_REQUESTED
       );
 
-      // 5. Distinct proxy re-read:
-      // A single proxy request (GoogleImageProxy / Apple MPP) is strictly an inbox arrival/delivery scan.
-      // Only subsequent proxy requests occurring at least 3 minutes after the initial scan indicate an open.
+      // 5. Proxy open classification:
+      // - Inbound delivery scans: Automated scanners (GoogleImageProxy, Apple MPP) fetch upon arrival in transit (usually within 0-90s of send), often in an immediate burst (<25s apart).
+      // - Human open:
+      //   (a) Any proxy fetch occurring >= 25s after the initial delivery scan (the user clicking into the email after delivery).
+      //   (b) Any proxy fetch occurring > 90s after sendTime (if no immediate delivery scan occurred, the first fetch minutes/hours later is the user opening it).
       const proxyEvents = validOpenEvents.filter((e) => e.isProxy);
       const proxyTimestamps = proxyEvents.map((e) => new Date(e.timestamp).getTime()).sort((a, b) => a - b);
+      const sendTime = m.sentAt || m.createdAt ? new Date(m.sentAt || m.createdAt).getTime() : 0;
+
       const hasDistinctProxyRead =
         proxyTimestamps.length >= 2 &&
-        (proxyTimestamps[proxyTimestamps.length - 1] - proxyTimestamps[0]) >= 180000;
+        (proxyTimestamps[proxyTimestamps.length - 1] - proxyTimestamps[0]) >= 25000;
+
+      const hasDelayedFirstProxyRead =
+        proxyTimestamps.length >= 1 &&
+        sendTime > 0 &&
+        (proxyTimestamps[0] - sendTime) >= 90000;
+
+      const isProxyOpened = hasDistinctProxyRead || hasDelayedFirstProxyRead;
 
       // Determine delivery state:
       const isDelivered =
@@ -268,7 +279,7 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         status = 'CLICKED';
         confidence = 'CONFIRMED';
         eventLabel = `${uniqueClicks} unique click${uniqueClicks > 1 ? 's' : ''}`;
-      } else if (hasConfirmedOpen || hasHumanOpen || isRepeatedReading || hasDistinctProxyRead) {
+      } else if (hasConfirmedOpen || hasHumanOpen || isRepeatedReading || isProxyOpened) {
         status = 'OPENED';
         confidence = hasConfirmedOpen ? 'CONFIRMED' : 'HIGH';
         eventLabel = hasConfirmedOpen ? 'Confirmed view' : 'Opened by recipient';
@@ -278,8 +289,9 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         (e) =>
           e.type === TrackingEventType.CONFIRMED_EMAIL_VIEW ||
           (!e.isProxy && e.type === TrackingEventType.PROBABLE_EMAIL_OPEN) ||
-          (hasDistinctProxyRead && e.isProxy)
+          (isProxyOpened && e.isProxy)
       );
+      const totalOpensCount = openEvents.length > 0 ? openEvents.length : (isProxyOpened ? 1 : 0);
       const latestEvent = m.trackingEvents[0];
 
       return {
@@ -290,7 +302,7 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         status,
         confidence,
         eventLabel,
-        totalOpens: openEvents.length,
+        totalOpens: totalOpensCount,
         totalClicks,
         uniqueClicks,
         replyReceived,

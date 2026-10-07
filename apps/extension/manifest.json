@@ -1,9 +1,21 @@
 {
   "manifest_version": 3,
   "name": "MailTrace Webmail Companion",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "First-party webmail companion for MailTrace tracking telemetry and confirmed views.",
-  "permissions": ["storage"],
+  "permissions": [
+    "storage",
+    "declarativeNetRequest"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ruleset_1",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
   "host_permissions": [
     "https://mail.google.com/*",
     "https://outlook.live.com/*",
@@ -24,6 +36,12 @@
   "content_scripts": [
     {
       "matches": ["https://mail.google.com/*"],
+      "js": ["dist/content/page-interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://mail.google.com/*"],
       "js": ["dist/content/gmail.js"],
       "run_at": "document_idle"
     },
@@ -31,6 +49,12 @@
       "matches": ["https://outlook.live.com/*", "https://outlook.office.com/*"],
       "js": ["dist/content/outlook.js"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["dist/content/page-interceptor.js"],
+      "matches": ["https://mail.google.com/*"]
     }
   ]
 }
