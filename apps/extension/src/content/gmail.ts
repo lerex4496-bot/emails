@@ -458,16 +458,71 @@ function findComposeRootForSendButton(sendBtn: HTMLElement): HTMLElement {
   return document.body;
 }
 
+// Clean up any extraneous duplicate buttons that might exist in the DOM
+function cleanDuplicateToggleButtons(): void {
+  // 1. Clean duplicates within each compose dialog
+  const composeDialogs = document.querySelectorAll<HTMLElement>(
+    'div[role="dialog"], div.AD, div.M9, div.aoI, div.inboxsdk__compose'
+  );
+  composeDialogs.forEach((dialog) => {
+    const btns = dialog.querySelectorAll<HTMLElement>('.mailtrace-toggle-btn');
+    if (btns.length > 1) {
+      for (let i = 1; i < btns.length; i++) {
+        btns[i].remove();
+      }
+    }
+  });
+
+  // 2. Clean duplicates within any shared parent container
+  const parentSet = new Set<HTMLElement>();
+  document.querySelectorAll<HTMLElement>('.mailtrace-toggle-btn').forEach((b) => {
+    if (b.parentElement) parentSet.add(b.parentElement);
+  });
+  parentSet.forEach((parent) => {
+    const btns = parent.querySelectorAll<HTMLElement>(':scope > .mailtrace-toggle-btn');
+    if (btns.length > 1) {
+      for (let i = 1; i < btns.length; i++) {
+        btns[i].remove();
+      }
+    }
+  });
+}
+
 // Hook a specific Send button with the native MailTrace tracking toggle
 function hookSendButton(sendBtn: HTMLElement): void {
-  // Check if this specific send button or its immediate toolbar row already has a toggle
-  const toolbar = sendBtn.closest<HTMLElement>('tr.btC, .btA, [role="toolbar"], td.gU, .dC') || sendBtn.parentElement;
+  // 1. If this send button was already hooked, never touch it again
+  if (sendBtn.getAttribute('data-mailtrace-hooked') === 'true') {
+    return;
+  }
+
+  // 2. Determine compose dialog container
+  const composeDialog = sendBtn.closest<HTMLElement>(
+    'div[role="dialog"], div.AD, div.M9, div.aoI, div.inboxsdk__compose'
+  );
+
+  // If the compose dialog already has a toggle button, skip
+  if (composeDialog && composeDialog.querySelector('.mailtrace-toggle-btn')) {
+    sendBtn.setAttribute('data-mailtrace-hooked', 'true');
+    return;
+  }
+
+  // 3. Determine toolbar and immediate parent container
+  const sendWrapper = sendBtn.closest<HTMLElement>('.dC') || sendBtn;
+  const parentContainer = sendWrapper.parentElement || sendBtn.parentElement;
+  const toolbar = sendBtn.closest<HTMLElement>('tr.btC, .btA, [role="toolbar"], td.gU') || parentContainer;
+
+  // If toolbar or parent already contains a toggle, skip
+  if (parentContainer && parentContainer.querySelector('.mailtrace-toggle-btn')) {
+    sendBtn.setAttribute('data-mailtrace-hooked', 'true');
+    return;
+  }
   if (toolbar && toolbar.querySelector('.mailtrace-toggle-btn')) {
+    sendBtn.setAttribute('data-mailtrace-hooked', 'true');
     return;
   }
-  if (sendBtn.parentElement?.querySelector('.mailtrace-toggle-btn')) {
-    return;
-  }
+
+  // Mark immediately as hooked to prevent any concurrent re-entry
+  sendBtn.setAttribute('data-mailtrace-hooked', 'true');
 
   // Create Toggle Button
   const btn = document.createElement('div');
@@ -492,9 +547,7 @@ function hookSendButton(sendBtn: HTMLElement): void {
       : '<span>⚪</span> <span>Track: OFF</span>';
   });
 
-  // Where to insert:
-  // Primary: Directly next to the Send button wrapper (.dC) in the same toolbar cell
-  const sendWrapper = sendBtn.closest<HTMLElement>('.dC') || sendBtn;
+  // Where to insert: Directly next to the Send button wrapper (.dC)
   if (sendWrapper.parentElement) {
     sendWrapper.parentElement.insertBefore(btn, sendWrapper.nextSibling);
   } else {
@@ -507,57 +560,56 @@ function hookSendButton(sendBtn: HTMLElement): void {
   }
 
   // Intercept Send Button & Ctrl+Enter with reliable race-condition prevention
-  if (!sendBtn.getAttribute('data-mailtrace-hooked')) {
-    sendBtn.setAttribute('data-mailtrace-hooked', 'true');
+  let isPrepared = false;
+  let isInjecting = false;
 
-    let isPrepared = false;
-    let isInjecting = false;
+  const triggerTrackedSend = async (e: Event) => {
+    if (isPrepared) {
+      return;
+    }
 
-    const triggerTrackedSend = async (e: Event) => {
-      if (isPrepared) {
-        return;
-      }
+    const isTracking = btn.getAttribute('data-mailtrace-active') === 'true';
+    if (!isTracking) {
+      return;
+    }
 
-      const isTracking = btn.getAttribute('data-mailtrace-active') === 'true';
-      if (!isTracking) {
-        return;
-      }
+    // Intercept and prevent Gmail from submitting immediately
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
 
-      // Intercept and prevent Gmail from submitting immediately
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
+    if (isInjecting) return;
+    isInjecting = true;
+    btn.innerHTML = '<span>⏳</span> <span>Tracking...</span>';
 
-      if (isInjecting) return;
-      isInjecting = true;
-      btn.innerHTML = '<span>⏳</span> <span>Tracking...</span>';
+    try {
+      const composeRoot = findComposeRootForSendButton(sendBtn);
+      await injectTrackingIntoCompose(composeRoot);
+    } catch (err) {
+      console.error('[MailTrace] Injection error:', err);
+    } finally {
+      isPrepared = true;
+      isInjecting = false;
+      btn.innerHTML = '<span>⚡</span> <span>Track: ON</span>';
+      sendBtn.click();
+    }
+  };
 
-      try {
-        const composeRoot = findComposeRootForSendButton(sendBtn);
-        await injectTrackingIntoCompose(composeRoot);
-      } catch (err) {
-        console.error('[MailTrace] Injection error:', err);
-      } finally {
-        isPrepared = true;
-        isInjecting = false;
-        btn.innerHTML = '<span>⚡</span> <span>Track: ON</span>';
-        sendBtn.click();
-      }
-    };
+  sendBtn.addEventListener('click', triggerTrackedSend, true);
 
-    sendBtn.addEventListener('click', triggerTrackedSend, true);
-
-    const composeRoot = findComposeRootForSendButton(sendBtn);
-    composeRoot.addEventListener('keydown', (e: any) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        triggerTrackedSend(e);
-      }
-    }, true);
-  }
+  const composeRoot = findComposeRootForSendButton(sendBtn);
+  composeRoot.addEventListener('keydown', (e: any) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      triggerTrackedSend(e);
+    }
+  }, true);
 }
 
 // 1. Hook into Gmail Compose Window (Standard, Docked, Fullscreen, and Inline)
 function observeComposeWindows(): void {
+  // Always clean up any accidental duplicate buttons first
+  cleanDuplicateToggleButtons();
+
   const sendSelectors = [
     '.aoO',
     '.T-I-atl',
@@ -574,6 +626,9 @@ function observeComposeWindows(): void {
     const aria = (el.getAttribute('aria-label') || '').toLowerCase();
     const tooltip = (el.getAttribute('data-tooltip') || '').toLowerCase();
     if (aria.includes('more send options') || tooltip.includes('more send options')) {
+      return;
+    }
+    if (aria.includes('feedback') || tooltip.includes('feedback')) {
       return;
     }
     foundBtns.add(el);
