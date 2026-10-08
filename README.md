@@ -24,9 +24,9 @@ In reality, modern email delivery is governed by **caching proxies, automated sp
 [Sent] ➔ [Delivered] ➔ [Resource Requested] ➔ [Possible Open] ➔ [Probable Open] ➔ [Confirmed View]
 ```
 
-1. **`TRACKING_RESOURCE_REQUESTED`**: Server received an HTTP GET request (automated crawlers, prefetch, scanners).
-2. **`POSSIBLE_EMAIL_OPEN`**: Resource fetched via caching proxies (Google Image Proxy, Apple MPP). Indeterminate whether read by human.
-3. **`PROBABLE_EMAIL_OPEN`**: Interactive timing (>5s after delivery) with residential/mobile user-agent characteristics.
+1. **`TRACKING_RESOURCE_REQUESTED`**: Server received an HTTP GET request. This is the **default** verdict — automated crawlers, prefetches, scanners, Apple MPP, and anything whose fetcher we cannot positively identify. Only positive evidence promotes an event above this.
+2. **`POSSIBLE_EMAIL_OPEN`**: Legacy state, retained for historical rows. It does **not** count as an open: "possible" is not sufficient under a never-show-a-false-open policy.
+3. **`PROBABLE_EMAIL_OPEN`**: Fetched by a recognised mail-client proxy more than 60s after dispatch, with no prefetch headers. Latched into `openedAt` so the verdict cannot regress.
 4. **`CONFIRMED_EMAIL_VIEW`**: Directly observed viewport render in MailTrace first-party clients (Windows, Android, webmail extension).
 5. **`LINK_CLICKED`**: Recipient clicked a tracked link (with strict open-redirect validation).
 6. **`REPLY_RECEIVED`**: Inbound reply correlated via `In-Reply-To`, `References`, or sub-addressing alias.
@@ -116,6 +116,7 @@ Content-Type: application/json
 
 ## 📚 Documentation
 
+- [FALSE_OPENS.md](./FALSE_OPENS.md) - **Required setup.** Why sender self-views and Google's delivery scan forge opens, and what to configure before trusting a green badge.
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - Deep architectural breakdown and component flows.
 - [THREAT_MODEL.md](./THREAT_MODEL.md) - Security invariants, open-redirect defense, token entropy.
 - [PRIVACY.md](./PRIVACY.md) - IP address policies, data retention, GDPR/CCPA alignment.
