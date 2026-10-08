@@ -88,7 +88,12 @@ export function formatEvidence(event: EventEvidenceInput): string {
     }
 
     if (proxy.toUpperCase().includes('GOOGLE')) {
-      return `Remote image requested via GoogleImageProxy cache servers (via: 1.1 google). Note: GoogleImageProxy uses a synthetic User-Agent (Windows NT 5.1 / Firefox 11) for all requests worldwide to protect recipient privacy; actual device OS (e.g. Android phone, iPhone) is masked.`;
+      // Two separate disclosures, and both have to stay. The device-masking note explains
+      // why the reported OS looks wrong; the indeterminacy clause is the honest verdict,
+      // because Google also fetches this image around delivery and for inbox prefetch,
+      // neither of which is a human read. Dropping the latter (commit befe94f) is what
+      // broke the truth-in-evidence test.
+      return `Remote image requested via GoogleImageProxy cache servers (via: 1.1 google); indeterminate whether recipient opened message, as Google also fetches remote images during delivery scanning. Note: GoogleImageProxy uses a synthetic User-Agent (Windows NT 5.1 / Firefox 11) for all requests worldwide to protect recipient privacy; actual device OS (e.g. Android phone, iPhone) is masked.`;
     }
 
     if (proxy.toUpperCase().includes('APPLE')) {

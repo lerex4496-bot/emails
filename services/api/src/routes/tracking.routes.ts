@@ -1,5 +1,9 @@
 import { FastifyPluginAsync } from 'fastify';
-import { TRANSPARENT_1X1_PNG, TRACKING_PIXEL_HEADERS } from '@mailtrace/tracking';
+import {
+  TRANSPARENT_1X1_PNG,
+  TRACKING_PIXEL_HEADERS,
+  TRACKING_REDIRECT_HEADERS,
+} from '@mailtrace/tracking';
 import { dispatchTrackingJob } from '../queue.js';
 import { getPrismaClient } from '@mailtrace/database';
 
@@ -85,7 +89,10 @@ export const trackingRoutes: FastifyPluginAsync = async (fastify) => {
           fastify.log.warn({ err }, 'Failed to dispatch click tracking job');
         });
 
-        // 302 Found redirect strictly to registered destination
+        // 302 Found redirect strictly to registered destination.
+        // Uncacheable: a cached redirect is served without reaching this handler, so
+        // every click after the first would go unrecorded.
+        reply.headers(TRACKING_REDIRECT_HEADERS);
         return reply.redirect(trackedLink.originalUrl, 302);
       } catch (err: any) {
         fastify.log.error({ err }, 'Error looking up tracked link');

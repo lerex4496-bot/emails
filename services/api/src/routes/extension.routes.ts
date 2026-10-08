@@ -1,5 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
-import { MessageStatus, ConfidenceLevel, TrackingEventType } from '@mailtrace/shared';
+import { MessageStatus, TrackingEventType } from '@mailtrace/shared';
 import { getPrismaClient } from '@mailtrace/database';
 import { generateTrackingToken, generateReplyAlias } from '@mailtrace/tracking';
 
@@ -228,21 +228,38 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
         (e) => e.type === TrackingEventType.CONFIRMED_EMAIL_VIEW
       );
 
-      // 2. Open events (human browser, Google Image Proxy, Apple MPP)
+      // 2. Open events. Only states that positively assert a human read count here.
+      // POSSIBLE_EMAIL_OPEN is deliberately excluded: "possible" is not enough for a green
+      // badge under a never-show-a-false-open policy, and the only producer of
+      // POSSIBLE/MEDIUM was the Apple MPP signature that never actually matched. Historical
+      // rows carrying it (Google proxy was graded POSSIBLE/MEDIUM before 8f62e62) stop
+      // counting as opens, which is the intended correction.
       const openEvents = validOpenEvents.filter(
         (e) =>
           e.type === TrackingEventType.CONFIRMED_EMAIL_VIEW ||
-          e.type === TrackingEventType.PROBABLE_EMAIL_OPEN ||
-          (e.type === TrackingEventType.POSSIBLE_EMAIL_OPEN && e.confidence !== ConfidenceLevel.LOW)
+          e.type === TrackingEventType.PROBABLE_EMAIL_OPEN
       );
-      const hasOpen = openEvents.length > 0;
 
-      // 3. Delivery indication (server received, scanner event, MTA accepted)
+      // The latched column is authoritative, because m.trackingEvents is capped at the 10
+      // most recent rows: once an open is evicted from that window the event-derived check
+      // goes false and the badge would regress from opened to delivered. The event list is
+      // still consulted so historical rows written before the column existed keep working.
+      const latchedOpenAt = m.recipients.find((r) => r.openedAt)?.openedAt ?? null;
+      const hasOpen = !!latchedOpenAt || openEvents.length > 0;
+
+      // 3. Delivery means RECIPIENT-SIDE evidence, not merely "a request arrived".
+      // A bare tracking event is not enough -- the sender's own browser can produce one,
+      // and a self-view must not read as "delivered to recipient inbox". A proxy signature
+      // is the usable signal: Google proxies and scans images only for a message its
+      // servers accepted into a mailbox. deliveryEvents (provider/MTA) is the stronger
+      // source and is the seam for wiring real delivery notifications later.
+      const hasProxyFetch = m.trackingEvents.some((e) => e.isProxy);
       const hasDelivery =
         m.status === MessageStatus.DELIVERED ||
         m.status === MessageStatus.PROVIDER_ACCEPTED ||
         (m.deliveryEvents && m.deliveryEvents.length > 0) ||
-        m.trackingEvents.length > 0;
+        hasProxyFetch ||
+        hasOpen;
 
       let status = hasDelivery ? 'DELIVERED' : 'SENT';
       let confidence = hasDelivery ? 'MEDIUM' : 'LOW';

@@ -147,6 +147,13 @@ model MessageRecipient {
   uniqueClicks         Int             @default(0)
   replyReceived        Boolean         @default(false)
   deliveryStatus       MessageStatus   @default(PENDING)
+  /// First counted open, latched once and never cleared.
+  ///
+  /// Status used to be recomputed on every poll from the 10 most recent tracking events,
+  /// so once a genuine open was pushed out of that window the badge silently reverted from
+  /// opened to delivered. Latching makes the transition monotonic by construction, which
+  /// matters more now that most events classify as non-opens and can evict an open row.
+  openedAt             DateTime?
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
 
@@ -212,6 +219,10 @@ model TrackingEvent {
   @@index([messageId, timestamp])
   @@index([type])
   @@index([timestamp])
+  // Required by the per-recipient event stream the classifier walks to derive fetch
+  // ordinality, and by the burst-dedupe lookup. Both filter on exactly this pair; without
+  // it they fall back to the bare timestamp index and scan across every recipient.
+  @@index([messageRecipientId, timestamp])
   @@map("tracking_events")
 }
 

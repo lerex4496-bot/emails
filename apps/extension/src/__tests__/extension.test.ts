@@ -37,6 +37,68 @@ describe('MailTrace Extension Manifest & Companion Tests', () => {
     expect(outlookScript).toBeDefined();
   });
 
+  describe('Self-fetch suppression (declarativeNetRequest)', () => {
+    const rulesPath = path.resolve(__dirname, '../../rules.json');
+    const rules = JSON.parse(fs.readFileSync(rulesPath, 'utf8'));
+
+    it('declares the ruleset referenced by the manifest', () => {
+      const manifest = JSON.parse(
+        fs.readFileSync(path.resolve(__dirname, '../../manifest.json'), 'utf8')
+      );
+      expect(manifest.permissions).toContain('declarativeNetRequest');
+      const ruleset = manifest.declarative_net_request.rule_resources.find(
+        (r: { path: string; enabled: boolean }) => r.path === 'rules.json'
+      );
+      expect(ruleset).toBeDefined();
+      expect(ruleset.enabled).toBe(true);
+    });
+
+    it('blocks the sender browser from fetching its own tracking pixel', () => {
+      const rule = rules.find(
+        (r: any) => r.action?.type === 'block' && r.condition?.urlFilter === '/t/open/'
+      );
+      expect(rule, 'rules.json must block /t/open/ initiated from Gmail').toBeDefined();
+      expect(rule.condition.initiatorDomains).toEqual(['mail.google.com']);
+    });
+
+    it('keeps the block rule host-agnostic', () => {
+      // The tracking host is derived from the request server-side and is editable in the
+      // popup, so pinning requestDomains would silently stop matching if it ever changed.
+      const rule = rules.find((r: any) => r.condition?.urlFilter === '/t/open/');
+      expect(rule.condition.requestDomains).toBeUndefined();
+    });
+
+    it('never blocks proxied opens, which carry no /t/click or /t/open in the wire URL', () => {
+      // Guards against someone "fixing" the rule by matching googleusercontent, which
+      // would break every image in every email, and against blocking click redirects.
+      for (const rule of rules) {
+        const filter: string = rule.condition?.urlFilter ?? '';
+        expect(filter).not.toContain('googleusercontent');
+        expect(filter).not.toContain('/t/click/');
+        expect(rule.condition?.requestDomains ?? []).not.toContain('ci3.googleusercontent.com');
+      }
+    });
+  });
+
+  describe('Sent-token registry scoping', () => {
+    const gmailSrc = fs.readFileSync(
+      path.resolve(__dirname, '../content/gmail.ts'),
+      'utf8'
+    );
+
+    it('does not seed the suppression registry from the server-wide status poll', () => {
+      // tracking-status returns every message on the server, and localStorage on
+      // mail.google.com is shared across all Gmail accounts in a Chrome profile, so
+      // seeding from it blanked recipients' pixels and suppressed genuine opens.
+      expect(gmailSrc).not.toMatch(/^\s*recordSentTokens\(/m);
+      expect(gmailSrc).not.toMatch(/function recordSentTokens\b/);
+    });
+
+    it('still records this device\'s own sends', () => {
+      expect(gmailSrc).toMatch(/recordSentToken\(trackingData\.openToken\)/);
+    });
+  });
+
   describe('findStatusMatch Algorithm Tests', () => {
     const gmailDist = fs.readFileSync(path.resolve(__dirname, '../../dist/content/gmail.js'), 'utf8');
     const fnMatch = gmailDist.match(/function findStatusMatch\([\s\S]*?\n\}/);

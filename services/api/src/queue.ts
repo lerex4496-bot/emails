@@ -94,47 +94,48 @@ export async function processTrackingPayload(data: TrackingJobPayload): Promise<
 
     if (!recipient) return;
 
-    // Sender self-open & transit/prefetch buffer filter:
-    // If the tracking pixel is requested within 60 seconds of message send,
-    // it was fetched during compose DOM insertion, sender preview, or Google delivery scanning.
-    // Rather than marking as human open, record it as automated diagnostic (DELIVERED status).
     const eventTimestamp = new Date(data.timestamp || Date.now());
     const sendTime = recipient.message?.sentAt || recipient.message?.createdAt;
     let elapsedSinceSend = 999999;
     if (sendTime) {
-      elapsedSinceSend = eventTimestamp.getTime() - new Date(sendTime).getTime();
+      // Clamped at zero. An event timestamped before the send (clock skew between this
+      // process and whatever produced the timestamp) used to yield a negative value, which
+      // is < the buffer and so was treated as early transit -- a wrong reason to reach a
+      // conservative verdict, and misleading in the stored event.
+      elapsedSinceSend = Math.max(0, eventTimestamp.getTime() - new Date(sendTime).getTime());
     }
 
     const ua = data.userAgent || '';
     const headers = data.headers || {};
+    // The default verdict is the WEAKEST one. Only positive evidence may raise it, so an
+    // unrecognised User-Agent is never reported as a human open. Before this was inverted,
+    // the chain below had no `else` and the initial value was PROBABLE_EMAIL_OPEN/HIGH, so
+    // every unrecognised fetcher past the transit buffer surfaced as "Opened by recipient".
     let isProxy = false;
     let proxyType: string | null = null;
-    let confidence = ConfidenceLevel.HIGH;
-    let classification = Classification.PROBABLE_HUMAN;
-    let eventType = TrackingEventType.PROBABLE_EMAIL_OPEN;
+    let confidence = ConfidenceLevel.LOW;
+    let classification = Classification.LIKELY_AUTOMATED;
+    let eventType = TrackingEventType.TRACKING_RESOURCE_REQUESTED;
 
-    const isEarlyTransit = elapsedSinceSend < 60000;
-    if (isEarlyTransit) {
-      confidence = ConfidenceLevel.LOW;
-      classification = Classification.LIKELY_AUTOMATED;
-      eventType = TrackingEventType.TRACKING_RESOURCE_REQUESTED;
-    } else if (ua.includes(KNOWN_PROXY_SIGNATURES.GOOGLE_IMAGE_PROXY)) {
-      // Google Image Proxy fetches when a recipient opens the email in Gmail
+    // Identify the fetcher BEFORE deciding the verdict, so proxy identity survives on
+    // early-transit hits -- exactly the events where knowing the fetcher matters most.
+    if (ua.includes(KNOWN_PROXY_SIGNATURES.GOOGLE_IMAGE_PROXY)) {
+      // Google's proxy fetches on render, and also scans around delivery. Timing, not the
+      // User-Agent, is what separates those two; see the transit buffer below.
       isProxy = true;
       proxyType = 'GOOGLE_IMAGE_PROXY';
       confidence = ConfidenceLevel.HIGH;
       classification = Classification.PROBABLE_HUMAN;
       eventType = TrackingEventType.PROBABLE_EMAIL_OPEN;
-    } else if (ua.includes(KNOWN_PROXY_SIGNATURES.APPLE_MPP)) {
-      // Apple Mail Privacy Protection prefetch / proxy fetch
-      isProxy = true;
-      proxyType = 'APPLE_MPP';
-      confidence = ConfidenceLevel.MEDIUM;
-      classification = Classification.POSSIBLE_HUMAN;
-      eventType = TrackingEventType.POSSIBLE_EMAIL_OPEN;
     } else if (ua.includes(KNOWN_PROXY_SIGNATURES.OFFICE365_ATP)) {
       isProxy = true;
       proxyType = 'OFFICE365';
+    }
+
+    // Transit / delivery-scan buffer: a request this soon after send is the compose-time
+    // self-fetch, a sender preview, or Google's delivery scan -- never a recipient open.
+    const isEarlyTransit = elapsedSinceSend < 60000;
+    if (isEarlyTransit) {
       confidence = ConfidenceLevel.LOW;
       classification = Classification.LIKELY_AUTOMATED;
       eventType = TrackingEventType.TRACKING_RESOURCE_REQUESTED;
@@ -176,37 +177,48 @@ export async function processTrackingPayload(data: TrackingJobPayload): Promise<
       },
     });
 
-    // Update aggregations
+    const isCountedOpen = classification === Classification.PROBABLE_HUMAN && !isBurstDuplicate;
+
+    // Update aggregations. openedAt latches on the first counted open and is never
+    // cleared, so OPENED can be derived from a single column instead of recomputed from a
+    // truncated slice of recent events.
     await prisma.messageRecipient.update({
       where: { id: recipient.id },
       data: {
         openResourceCount: { increment: 1 },
-        probableOpenCount:
-          classification === Classification.PROBABLE_HUMAN && !isBurstDuplicate
-            ? { increment: 1 }
-            : undefined,
+        probableOpenCount: isCountedOpen ? { increment: 1 } : undefined,
+        openedAt: recipient.openedAt ?? (isCountedOpen ? eventTimestamp : undefined),
       },
     });
 
-    // Update message status and timestamps
-    if (recipient.message.status === MessageStatus.SENT || recipient.message.status === MessageStatus.PENDING) {
-      await prisma.message.update({
-        where: { id: recipient.messageId },
-        data: {
-          status: MessageStatus.DELIVERED,
-          firstActivityAt: recipient.message.firstActivityAt || eventTimestamp,
-          lastActivityAt: eventTimestamp,
-        },
-      });
-    } else {
-      await prisma.message.update({
-        where: { id: recipient.messageId },
-        data: {
-          firstActivityAt: recipient.message.firstActivityAt || eventTimestamp,
-          lastActivityAt: eventTimestamp,
-        },
-      });
-    }
+    // Delivery requires RECIPIENT-SIDE evidence. A bare pixel request is not enough: the
+    // sender's own browser can produce one (compose insertion, draft restore), and a
+    // self-view must not report "delivered to recipient inbox".
+    //
+    // A proxy signature is what makes a fetch recipient-side: Google only scans and
+    // proxies images for a message its servers accepted and stored in a mailbox. A direct,
+    // unproxied fetch carries no such signature and no longer advances status.
+    //
+    // This is still not airtight -- the sender viewing their OWN sent mail is proxied too,
+    // and is indistinguishable at this layer. That residual case is addressed by turning
+    // off remote-image loading on the sender's account (see docs) rather than here.
+    const hasRecipientSideEvidence = isProxy || isCountedOpen;
+    const advanceToDelivered =
+      hasRecipientSideEvidence &&
+      (recipient.message.status === MessageStatus.SENT ||
+        recipient.message.status === MessageStatus.PENDING);
+
+    await prisma.message.update({
+      where: { id: recipient.messageId },
+      data: {
+        status: advanceToDelivered ? MessageStatus.DELIVERED : undefined,
+        deliveredAt: advanceToDelivered
+          ? recipient.message.deliveredAt ?? eventTimestamp
+          : undefined,
+        firstActivityAt: recipient.message.firstActivityAt || eventTimestamp,
+        lastActivityAt: eventTimestamp,
+      },
+    });
   } else if (data.type === 'CLICK' && data.token) {
     const trackedLink = await prisma.trackedLink.findUnique({
       where: { token: data.token },
@@ -285,12 +297,13 @@ export async function dispatchTrackingJob(payload: TrackingJobPayload): Promise<
     }
   }
 
-  // Direct processing fallback (standalone / zero-Redis mode)
+  // Direct processing fallback (standalone / zero-Redis mode).
+  // This is the ONLY classification path in the deployed configuration (REDIS_URL=none),
+  // so failures here are silent data loss. Always log: a swallowed TypeError in the
+  // classifier is indistinguishable from "suppression working as intended".
   try {
     await processTrackingPayload(payload);
   } catch (err) {
-    if (process.env.NODE_ENV === 'development') {
-      console.warn('[Tracking Direct Fallback Error]:', err);
-    }
+    console.error('[Tracking Direct Fallback Error]:', err);
   }
 }

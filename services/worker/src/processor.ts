@@ -65,12 +65,6 @@ export async function processTrackingJob(job: Job<TrackingJobData>): Promise<voi
       confidence = ConfidenceLevel.MEDIUM;
       classification = Classification.POSSIBLE_HUMAN;
       eventType = TrackingEventType.POSSIBLE_EMAIL_OPEN;
-    } else if (ua.includes(KNOWN_PROXY_SIGNATURES.APPLE_MPP)) {
-      isProxy = true;
-      proxyType = 'APPLE_MPP';
-      confidence = ConfidenceLevel.MEDIUM;
-      classification = Classification.POSSIBLE_HUMAN;
-      eventType = TrackingEventType.POSSIBLE_EMAIL_OPEN;
     } else if (ua.includes(KNOWN_PROXY_SIGNATURES.OFFICE365_ATP)) {
       isProxy = true;
       proxyType = 'OFFICE365';

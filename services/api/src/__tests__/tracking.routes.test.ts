@@ -95,8 +95,24 @@ describe('Tracking & Health Endpoints', () => {
     expect(res.headers['cache-control']).toContain('no-cache');
     expect(res.headers['cache-control']).toContain('must-revalidate');
     expect(res.headers['expires']).toBe('0');
+    // Vary: * forbids a conforming cache from reusing a stored response (RFC 9111 4.1).
+    expect(res.headers['vary']).toBe('*');
     // 68-byte transparent PNG
     expect(res.rawPayload.length).toBe(68);
+  });
+
+  it('GET /t/open/:token sends no validators, so no conditional request can bypass counting', async () => {
+    // Not because a 304 would skip counting -- it would still reach the handler. Because
+    // RFC 9111 4.3.2 lets a cache generate a 200 from its stored body on the strength of a
+    // 304, which is exactly the reuse these headers exist to prevent. Frameworks also add
+    // ETags unprompted, so this guards against a static-file middleware creeping in.
+    const res = await app.inject({
+      method: 'GET',
+      url: '/t/open/sample-open-token-xyz',
+    });
+
+    expect(res.headers['etag']).toBeUndefined();
+    expect(res.headers['last-modified']).toBeUndefined();
   });
 
   it('GET /t/click/:token with registered token redirects 302 strictly to original URL', async () => {
@@ -107,6 +123,16 @@ describe('Tracking & Health Endpoints', () => {
 
     expect(res.statusCode).toBe(302);
     expect(res.headers.location).toBe('https://example.com/target-page');
+  });
+
+  it('GET /t/click/:token redirect is uncacheable, so repeat clicks are still recorded', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/t/click/valid-click-token-123',
+    });
+
+    expect(res.headers['cache-control']).toContain('no-store');
+    expect(res.headers['vary']).toBe('*');
   });
 
   it('GET /t/click/:token with unregistered token returns 404 (open redirect prevented)', async () => {

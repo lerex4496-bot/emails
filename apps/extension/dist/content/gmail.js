@@ -324,6 +324,9 @@ async function fetchTrackingStatuses() {
         return cachedStatuses;
     }
     isFetchingStatuses = true;
+    // Advance the throttle clock up front, not only on success. Otherwise a failing API
+    // defeats the 3s throttle entirely and every poll tick issues a fresh request.
+    lastStatusFetch = now;
     // 1. Primary path: Call background service worker (Bypasses Gmail CSP)
     if (isExtensionValid() && typeof chrome.runtime.sendMessage === 'function') {
         try {
@@ -332,43 +335,64 @@ async function fetchTrackingStatuses() {
                     resolve({ success: false });
                     return;
                 }
+                // The service worker can be torn down mid-flight, in which case the callback
+                // never fires. Without this timeout the promise never settles, isFetchingStatuses
+                // stays true forever, and badge polling is wedged for the life of the tab.
+                let settled = false;
+                const finish = (r) => {
+                    if (settled)
+                        return;
+                    settled = true;
+                    resolve(r);
+                };
+                const timeoutId = setTimeout(() => finish({ success: false }), 10000);
                 try {
                     chrome.runtime.sendMessage({ action: 'GET_TRACKING_STATUS' }, (resp) => {
+                        clearTimeout(timeoutId);
                         const err = chrome.runtime?.lastError;
                         if (err && err.message && err.message.includes('Extension context invalidated')) {
                             cleanupInvalidatedExtension();
-                            resolve({ success: false });
+                            finish({ success: false });
                         }
                         else {
-                            resolve(resp || { success: false });
+                            finish(resp || { success: false });
                         }
                     });
                 }
                 catch (e) {
+                    clearTimeout(timeoutId);
                     if (e && e.message && e.message.includes('Extension context invalidated')) {
                         cleanupInvalidatedExtension();
                     }
-                    resolve({ success: false });
+                    finish({ success: false });
                 }
             });
             if (response && response.success && Array.isArray(response.statuses)) {
                 cachedStatuses = response.statuses;
-                lastStatusFetch = now;
-                const tokens = [];
-                response.statuses.forEach((s) => {
-                    if (s.openTrackingToken)
-                        tokens.push(s.openTrackingToken);
-                });
-                if (tokens.length > 0) {
-                    recordSentTokens(tokens);
-                }
+                // Deliberately NOT seeding the suppression registry from this response.
+                //
+                // The registry drives pixel neutralisation, and neutralisation applies in any view
+                // including the inbox. tracking-status returns every message on the server, not
+                // just this device's sends, and localStorage on mail.google.com is shared across
+                // every Gmail account in the Chrome profile -- so seeding from here caused the
+                // *recipient* copy's pixel to be blanked and removed. That silently suppressed
+                // genuine opens and made self-send testing impossible.
+                //
+                // The registry is populated only from this device's own prepare-tracking response
+                // (see injectTrackingIntoCompose), which is the only source that actually means
+                // "I sent this".
             }
         }
         catch {
             // Ignore transient network errors
         }
+        finally {
+            isFetchingStatuses = false;
+        }
     }
-    isFetchingStatuses = false;
+    else {
+        isFetchingStatuses = false;
+    }
     return cachedStatuses;
 }
 const BLANK_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
@@ -405,29 +429,9 @@ function recordSentToken(token) {
         // Ignore storage errors
     }
 }
-function recordSentTokens(tokens) {
-    if (!Array.isArray(tokens) || tokens.length === 0)
-        return;
-    try {
-        let changed = false;
-        tokens.forEach((t) => {
-            if (t && typeof t === 'string' && !sentTokens.has(t)) {
-                sentTokens.add(t);
-                changed = true;
-            }
-        });
-        if (changed) {
-            const serialized = JSON.stringify(Array.from(sentTokens));
-            localStorage.setItem('mailtrace_sent_tokens', serialized);
-            window.postMessage({ source: 'MAILTRACE_EXTENSION', action: 'ADD_SENT_TOKENS', tokens }, '*');
-            document.dispatchEvent(new CustomEvent('mailtrace:add-sent-tokens', { detail: tokens }));
-            document.documentElement?.setAttribute('data-mailtrace-tokens', serialized);
-        }
-    }
-    catch {
-        // Ignore storage errors
-    }
-}
+// recordSentTokens (bulk) was removed with its only caller: it seeded the suppression
+// registry from the server-wide tracking-status response, which blanked recipients' pixels.
+// Only recordSentToken above remains, fed by this device's own prepare-tracking response.
 function extractToken(url) {
     if (!url || typeof url !== 'string')
         return null;
@@ -840,6 +844,44 @@ async function injectTrackingIntoCompose(dialog) {
             }
         }
         // 2. Append Invisible Tracking Pixel (1x1 PNG)
+        //
+        // Setting .src here makes THIS browser fetch the pixel: the <img> is appended to the
+        // live compose document, and this runs in the isolated world, so the MAIN-world
+        // HTMLImageElement.prototype.src patch in page-interceptor.ts cannot see it and the
+        // MAIN-world MutationObserver deliberately skips compose containers. That direct
+        // fetch was the single largest source of false "opens" -- one per send, at T~0, from
+        // the sender's own IP.
+        //
+        // It is now blocked at the network layer by declarativeNetRequest rule 1 in
+        // rules.json: block any request whose URL contains "/t/open/" and whose initiator is
+        // mail.google.com. The rule is deliberately host-agnostic, because the tracking host
+        // is request-derived server-side and user-editable in the popup, so pinning
+        // requestDomains would silently stop matching if the Render URL ever changed.
+        //
+        // A blocked image request does not alter the element, so the src attribute still
+        // survives into the HTML Gmail serializes and the recipient receives a working pixel.
+        //
+        // SCOPE, and it is wider than it looks. DNR matches against the URL *spec*, which in
+        // current Chromium still carries the fragment -- the ref is only dropped further
+        // downstream, at HttpUtil::SpecForRequest, for the wire request-target and the HTTP
+        // cache key. Gmail's proxy src is
+        //   https://ci<N>.googleusercontent.com/meips/<token>=s0-d-e1-ft#https://origin/t/open/<tok>.png
+        // so that spec contains "/t/open/" and this rule blocks PROXIED fetches too, not just
+        // direct ones. That is desirable here -- it suppresses the sender's proxied self-view
+        // of their own Sent copy, which is otherwise indistinguishable at the origin.
+        //
+        // Two consequences to know about:
+        //  1. It also blocks the pixel when THIS browser is the recipient, so a send-to-self
+        //     test will show no open. Verify open tracking from a browser without the
+        //     extension, which is the realistic recipient anyway.
+        //  2. Fragment matching is undocumented, has no upstream test coverage, and WECG
+        //     issue #770 proposes changing DNR input canonicalisation. Treat it as a measured
+        //     bonus, never a contract. If it regresses, only direct fetches are blocked and
+        //     the server-side classifier in queue.ts remains the backstop.
+        //
+        // Expect at least one net::ERR_BLOCKED_BY_CLIENT in the console per send. That is the
+        // rule working; its absence means the rule is not loaded (rules.json changes need an
+        // extension reload).
         if (trackingData.pixelUrl) {
             const pixel = document.createElement('img');
             pixel.src = trackingData.pixelUrl;
