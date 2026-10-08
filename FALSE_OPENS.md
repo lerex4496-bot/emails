@@ -121,14 +121,42 @@ denylist if you like, but it is not a third class of fetcher to design around.
 ### 3. Delivery requires recipient-side evidence
 
 A bare pixel request is not delivery evidence, because the sender's own browser can produce
-one. Status advances to `DELIVERED` only on a **proxy-signed** fetch or a counted open:
-Google proxies and scans images only for a message its servers accepted into a mailbox.
+one. Previously *any* tracking event satisfied delivery — and on every send the first event
+was the compose-time self-fetch, so every message reported "Delivered to recipient inbox"
+within a second of hitting Send, regardless of what the recipient's server did.
+
+Delivery now comes from three sources, strongest first:
+
+1. **A recorded bounce**, which settles it negatively. The message shows `BOUNCED`.
+2. **A proxy-signed fetch.** Google proxies images only for a message its servers accepted
+   into a mailbox, so this is positive receipt evidence. It is *not* reliable on its own:
+   there is no universal pre-delivery image scan, so for most messages the first proxy fetch
+   **is** the open and the badge goes straight from Sent to Opened.
+3. **Absence of a bounce after a three-minute grace period.** A rejected message produces a
+   Mail Delivery Subsystem notice within seconds, so silence past that window means the
+   recipient's server accepted it.
+
+Source 3 is an **inference, not an observation**, and is surfaced as such — `LOW` confidence
+and the label "Delivered • no bounce received" rather than "Delivered to recipient inbox".
+
+What makes it evidence rather than a guess is that the extension actively watches for
+bounces. Gmail delivers them to the **sender's** mailbox, which is where the content script
+already runs, so rejections are observable with no mailbox API and no OAuth scope. The
+extension matches a bounce notice to a tracked message by the quoted original subject and
+reports it to `POST /api/v1/extension/delivery-failure`. That path can only ever make a
+verdict more negative, so it cannot manufacture a delivery or an open.
+
+Two honest limits:
+
+- **Spam placement is silent.** No bounce is generated, so this proves "the recipient's
+  server accepted it", never "it reached the inbox".
+- **Bounce matching is subject-based** and therefore fuzzy. Messages with a very short or
+  empty subject are skipped rather than risk mismatching.
 
 `DeliveryEvent` and
-[`classifyDeliveryNotification`](packages/email/src/delivery/classifier.ts) are the stronger
-source and are wired into the read path as a seam — they have no producer yet. Until a
-webhook or Gmail API confirmation exists, **non-Gmail recipients show `SENT`**, because they
-produce no proxy fetch at all. That is a known gap, not a misreport.
+[`classifyDeliveryNotification`](packages/email/src/delivery/classifier.ts) remain the seam
+for real provider/MTA notifications, which would upgrade source 3 to a direct observation
+and cover non-Gmail recipients properly.
 
 ### 4. The pixel must be genuinely uncacheable
 

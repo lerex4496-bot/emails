@@ -3,6 +3,20 @@ import { MessageStatus, TrackingEventType } from '@mailtrace/shared';
 import { getPrismaClient } from '@mailtrace/database';
 import { generateTrackingToken, generateReplyAlias } from '@mailtrace/tracking';
 
+/**
+ * How long to wait after send before treating silence as delivery.
+ *
+ * A rejected message produces a Mail Delivery Subsystem notice within seconds, so silence
+ * past this window means the recipient's server accepted it. Three minutes leaves room for
+ * Gmail's Undo Send (up to 30s, during which nothing has been transmitted) plus ordinary
+ * queueing, without leaving the badge stuck on "Sent" long enough to look broken.
+ *
+ * This yields an inference, not an observation, and is surfaced with LOW confidence and a
+ * label that says what it rests on. It becomes real evidence once the extension reports
+ * bounces it sees in the sender's own inbox.
+ */
+const BOUNCE_GRACE_MS = 3 * 60 * 1000;
+
 export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
   const prisma = getPrismaClient();
   const defaultTrackingBaseUrl = (process.env.TRACKING_BASE_URL || process.env.RENDER_EXTERNAL_URL || 'https://mailtrace-api-7bx5.onrender.com').replace(/\/$/, '');
@@ -165,6 +179,70 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   /**
+   * Extension endpoint: report a delivery failure the extension observed.
+   *
+   * Gmail delivers a bounce as a Mail Delivery Subsystem message into the SENDER's own
+   * inbox, which is where the extension already runs -- so a bounce is observable without
+   * any mailbox API access or OAuth scope. Recording it turns the grace-period inference
+   * in tracking-status into real evidence: silence then genuinely means "no rejection was
+   * reported", rather than "we were not looking".
+   *
+   * Note this only ever makes the verdict more negative, never more positive, so it cannot
+   * manufacture a delivery or an open.
+   */
+  fastify.post('/api/v1/extension/delivery-failure', async (request, reply) => {
+    const body = (request.body || {}) as {
+      messageId?: string;
+      openToken?: string;
+      reason?: string;
+      hardBounce?: boolean;
+    };
+
+    let messageId = body.messageId;
+    if (!messageId && body.openToken) {
+      const recipient = await prisma.messageRecipient.findUnique({
+        where: { openTrackingToken: body.openToken },
+        select: { messageId: true },
+      });
+      messageId = recipient?.messageId;
+    }
+
+    if (!messageId) {
+      return reply.status(400).send({
+        success: false,
+        error: 'Bad Request',
+        message: 'messageId or openToken is required',
+      });
+    }
+
+    const message = await prisma.message.findUnique({ where: { id: messageId } });
+    if (!message) {
+      return reply.status(404).send({ success: false, error: 'Not Found' });
+    }
+
+    const status = body.hardBounce === false ? MessageStatus.FAILED : MessageStatus.BOUNCED;
+    const reason = (body.reason || '').slice(0, 500) || null;
+
+    // Idempotent: the extension re-scans the inbox on a timer and will see the same
+    // bounce notice repeatedly.
+    const existing = await prisma.deliveryEvent.findFirst({
+      where: { messageId, status },
+    });
+
+    if (!existing) {
+      await prisma.deliveryEvent.create({
+        data: { messageId, status, reason },
+      });
+      await prisma.message.update({
+        where: { id: messageId },
+        data: { status, lastActivityAt: new Date() },
+      });
+    }
+
+    return reply.send({ success: true, messageId, status });
+  });
+
+  /**
    * Extension endpoint: Fetch lightweight tracking status map for Gmail Sent / Inbox rows.
    */
   fastify.get('/api/v1/extension/tracking-status', async (_request, reply) => {
@@ -249,23 +327,55 @@ export const extensionRoutes: FastifyPluginAsync = async (fastify) => {
 
       // 3. Delivery means RECIPIENT-SIDE evidence, not merely "a request arrived".
       // A bare tracking event is not enough -- the sender's own browser can produce one,
-      // and a self-view must not read as "delivered to recipient inbox". A proxy signature
-      // is the usable signal: Google proxies and scans images only for a message its
-      // servers accepted into a mailbox. deliveryEvents (provider/MTA) is the stronger
-      // source and is the seam for wiring real delivery notifications later.
+      // and a self-view must not read as "delivered to recipient inbox".
+      //
+      // Three sources, strongest first:
+      //  a. A recorded bounce/DSN, which settles it negatively.
+      //  b. A proxy-signed fetch. Google proxies images only for a message its servers
+      //     accepted into a mailbox, so this is positive receipt evidence. It is not
+      //     reliable on its own: there is no universal pre-delivery image scan, so for
+      //     most messages the first proxy fetch IS the open.
+      //  c. Absence of a bounce after a grace period. Weaker, and an INFERENCE rather
+      //     than an observation -- labelled as such below. A rejected message produces a
+      //     Mail Delivery Subsystem notice within seconds; silence past the grace period
+      //     means the recipient's server accepted it. It does NOT mean the inbox: spam
+      //     placement is silent.
+      const bounced =
+        m.status === MessageStatus.BOUNCED ||
+        m.status === MessageStatus.FAILED ||
+        (m.deliveryEvents || []).some(
+          (e) => e.status === MessageStatus.BOUNCED || e.status === MessageStatus.FAILED
+        );
+
       const hasProxyFetch = m.trackingEvents.some((e) => e.isProxy);
-      const hasDelivery =
+      const confirmedDelivery =
         m.status === MessageStatus.DELIVERED ||
         m.status === MessageStatus.PROVIDER_ACCEPTED ||
-        (m.deliveryEvents && m.deliveryEvents.length > 0) ||
+        (m.deliveryEvents || []).some((e) => e.status === MessageStatus.DELIVERED) ||
         hasProxyFetch ||
         hasOpen;
 
-      let status = hasDelivery ? 'DELIVERED' : 'SENT';
-      let confidence = hasDelivery ? 'MEDIUM' : 'LOW';
-      let eventLabel = hasDelivery ? 'Delivered to recipient inbox' : 'Sent • Waiting for recipient';
+      const sendTimeForGrace = m.sentAt || m.createdAt;
+      const graceElapsed = sendTimeForGrace
+        ? Date.now() - new Date(sendTimeForGrace).getTime() >= BOUNCE_GRACE_MS
+        : false;
+      const inferredDelivery = !bounced && graceElapsed;
 
-      if (replyReceived) {
+      const hasDelivery = !bounced && (confirmedDelivery || inferredDelivery);
+
+      let status = hasDelivery ? 'DELIVERED' : 'SENT';
+      let confidence = hasDelivery ? (confirmedDelivery ? 'MEDIUM' : 'LOW') : 'LOW';
+      let eventLabel = hasDelivery
+        ? confirmedDelivery
+          ? 'Delivered to recipient inbox'
+          : 'Delivered • no bounce received'
+        : 'Sent • Waiting for recipient';
+
+      if (bounced) {
+        status = 'BOUNCED';
+        confidence = 'CONFIRMED';
+        eventLabel = 'Bounced • not delivered';
+      } else if (replyReceived) {
         status = 'REPLIED';
         confidence = 'CONFIRMED';
         eventLabel = 'Reply received';

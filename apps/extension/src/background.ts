@@ -95,6 +95,34 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === 'REPORT_DELIVERY_FAILURE') {
+    const doReport = (apiBase: string) => {
+      return fetch(`${apiBase}/api/v1/extension/delivery-failure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request.payload || {}),
+      }).then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      });
+    };
+
+    doReport(currentApiUrl)
+      .catch(() => {
+        if (currentApiUrl !== DEFAULT_API_URL) {
+          return doReport(DEFAULT_API_URL);
+        }
+        throw new Error('API server unreachable');
+      })
+      .then((data) => {
+        sendResponse({ success: true, data });
+      })
+      .catch((err) => {
+        sendResponse({ success: false, error: err.message });
+      });
+    return true;
+  }
+
   if (request.action === 'CONFIRM_VIEW') {
     const doConfirm = (apiBase: string) => {
       return fetch(`${apiBase}/api/v1/events/confirm-view`, {
