@@ -1358,6 +1358,68 @@ async function refreshBadges(): Promise<void> {
   if (!statuses || statuses.length === 0) return;
   updateRowBadges(statuses);
   updateThreadBadges(statuses);
+  detectBounces(statuses);
+}
+
+// Messages already reported this page-load, so the 1.2s poll does not re-post.
+// The server is idempotent as well; this just avoids the traffic.
+const reportedBounces = new Set<string>();
+
+/**
+ * Detect delivery failures in the sender's own inbox.
+ *
+ * Gmail delivers a bounce as a Mail Delivery Subsystem message to the SENDER, which is
+ * the mailbox this content script is already running in -- so rejections are observable
+ * with no mailbox API and no OAuth scope. Reporting them is what turns the server's
+ * "no bounce within the grace period" inference into actual evidence.
+ *
+ * Only ever makes a verdict more negative. It cannot manufacture a delivery or an open.
+ */
+function detectBounces(statuses: StatusItem[]): void {
+  if (!isExtensionValid()) return;
+
+  const rows = document.querySelectorAll('tr.zA, tr[role="row"]');
+  rows.forEach((row) => {
+    const rowText = (row.textContent || '').toLowerCase();
+
+    const isBounceNotice =
+      rowText.includes('mail delivery subsystem') ||
+      rowText.includes('delivery status notification (failure)') ||
+      rowText.includes('undelivered mail returned to sender') ||
+      rowText.includes('address not found');
+    if (!isBounceNotice) return;
+
+    // A bounce notice quotes the original subject, so match on that rather than on the
+    // notice's own subject. Require a non-trivial subject: an empty or one-character
+    // subject would match almost any row text.
+    const match = statuses.find((s) => {
+      const subject = (s.subject || '').trim().toLowerCase();
+      if (subject.length < 3 || subject === '(no subject)') return false;
+      return rowText.includes(subject);
+    });
+    if (!match || reportedBounces.has(match.messageId)) return;
+
+    reportedBounces.add(match.messageId);
+
+    const hardBounce =
+      rowText.includes('address not found') ||
+      rowText.includes("couldn't be found") ||
+      rowText.includes('does not exist');
+
+    try {
+      chrome.runtime.sendMessage({
+        action: 'REPORT_DELIVERY_FAILURE',
+        payload: {
+          messageId: match.messageId,
+          openToken: match.openTrackingToken || undefined,
+          hardBounce,
+          reason: (row.textContent || '').trim().slice(0, 300),
+        },
+      });
+    } catch {
+      // Extension context invalidated
+    }
+  });
 }
 
 // 4. Observe First-Party Thread Viewing
