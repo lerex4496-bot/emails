@@ -198,6 +198,23 @@
             return fullMatch;
         });
     }
+    // Which of the patches below actually matter, verified against Blink:
+    //
+    // String-level, PRE-PARSE hooks are the load-bearing ones. They run synchronously
+    // upstream of the HTML parser, so rewriting the string is decisive.
+    //
+    // Attribute-level hooks (the `src` setter, `setAttribute`) are near-dead weight against
+    // Gmail's parser path. Element::ParserSetAttributes runs with DCHECK(!isConnected())
+    // and calls the C++ AttributeChanged(..., kByParser) -- it never invokes the JS `src`
+    // setter or setAttribute. The image load is then enqueued from
+    // HTMLImageElement::ParseAttribute -> SelectSourceURL -> ImageLoader::UpdateFromElement,
+    // all before insertion. They are kept only for pixels built imperatively by scripts.
+    //
+    // The MutationObserver further down is a race that is usually lost, not a guarantee:
+    // observer delivery shares the image-loading microtask queue and its position is fixed
+    // by the first mutation of the cycle. Clearing `src` in the callback does prevent the
+    // fetch when it wins, so it is worth keeping -- but never rely on it. Note that
+    // img.remove() alone never helps: a detached image in an active document still loads.
     // 1. Intercept Element.prototype.innerHTML
     const innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
     if (innerHTMLDesc && innerHTMLDesc.set) {
@@ -215,6 +232,39 @@
             configurable: true,
             enumerable: true,
         });
+    }
+    // 1b. Intercept setHTMLUnsafe / parseHTMLUnsafe.
+    // Same pre-parse string path as innerHTML, Baseline since September 2025, and previously
+    // unpatched -- so they were a complete bypass of the sanitiser above.
+    const elProtoAny = Element.prototype;
+    if (typeof elProtoAny.setHTMLUnsafe === 'function') {
+        const origSetHTMLUnsafe = elProtoAny.setHTMLUnsafe;
+        elProtoAny.setHTMLUnsafe = function (html, ...rest) {
+            if (typeof html === 'string' && !isComposeContext(this)) {
+                html = sanitizeHtmlString(html, this);
+            }
+            return origSetHTMLUnsafe.call(this, html, ...rest);
+        };
+    }
+    const shadowProtoAny = typeof ShadowRoot !== 'undefined' ? ShadowRoot.prototype : null;
+    if (shadowProtoAny && typeof shadowProtoAny.setHTMLUnsafe === 'function') {
+        const origShadowSetHTMLUnsafe = shadowProtoAny.setHTMLUnsafe;
+        shadowProtoAny.setHTMLUnsafe = function (html, ...rest) {
+            if (typeof html === 'string') {
+                html = sanitizeHtmlString(html, null);
+            }
+            return origShadowSetHTMLUnsafe.call(this, html, ...rest);
+        };
+    }
+    const documentCtor = Document;
+    if (typeof documentCtor.parseHTMLUnsafe === 'function') {
+        const origParseHTMLUnsafe = documentCtor.parseHTMLUnsafe;
+        documentCtor.parseHTMLUnsafe = function (html, ...rest) {
+            if (typeof html === 'string') {
+                html = sanitizeHtmlString(html, null);
+            }
+            return origParseHTMLUnsafe.call(this, html, ...rest);
+        };
     }
     // 2. Intercept HTMLImageElement.prototype.src
     const imgProto = HTMLImageElement.prototype;
@@ -235,16 +285,18 @@
             enumerable: true,
         });
     }
-    // 3. Intercept Element.prototype.setAttribute
-    const origSetAttr = Element.prototype.setAttribute;
-    Element.prototype.setAttribute = function (name, value) {
-        if (typeof name === 'string' && name.toLowerCase() === 'src' && typeof value === 'string') {
-            if (shouldSuppress(value, this)) {
-                return origSetAttr.call(this, name, BLANK_PIXEL);
-            }
-        }
-        return origSetAttr.call(this, name, value);
-    };
+    // 3. REMOVED: Element.prototype.setAttribute.
+    //
+    // It wrapped one of the hottest DOM calls on the page for no suppression benefit --
+    // Gmail builds message bodies through the HTML parser, which sets attributes in C++ via
+    // Element::ParserSetAttributes and never calls this setter (see the note above).
+    //
+    // It was also actively harmful. Because the wrapper sits in the call stack for EVERY
+    // setAttribute on the page, Chrome attributed unrelated Gmail console warnings to this
+    // extension: setting an iframe's allow="...speaker..." surfaced as
+    // "Unrecognized feature: 'speaker'" against page-interceptor.js in chrome://extensions.
+    // That is Gmail's warning, not ours, and no narrowing of the wrapper can suppress it --
+    // any wrapper is in the stack. Not patching is the only fix.
     // 4. Intercept DOMParser.prototype.parseFromString
     if (typeof DOMParser !== 'undefined') {
         const origParse = DOMParser.prototype.parseFromString;
@@ -265,17 +317,10 @@
             return origFragment.call(this, tagString);
         };
     }
-    // 6. Network safety layer: Intercept fetch for tracking URLs with sent tokens
-    if (typeof window.fetch === 'function') {
-        const origFetch = window.fetch;
-        window.fetch = function (input, init) {
-            const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-            if (url && shouldSuppress(url, null)) {
-                return Promise.resolve(new Response(new Blob([], { type: 'image/gif' }), { status: 200 }));
-            }
-            return origFetch.apply(this, arguments);
-        };
-    }
+    // 6. REMOVED: window.fetch.
+    // Gmail does not load images through fetch(), so this caught nothing real, and it
+    // fabricated a synthetic 200 Response for any URL that matched -- a way to corrupt
+    // page state rather than suppress a pixel.
     // 7. Intercept Element.prototype.insertAdjacentHTML
     if (typeof Element !== 'undefined' && Element.prototype.insertAdjacentHTML) {
         const origInsertAdjacentHTML = Element.prototype.insertAdjacentHTML;
@@ -286,26 +331,26 @@
             return origInsertAdjacentHTML.call(this, position, text);
         };
     }
-    // 8. Intercept XMLHttpRequest for tracking URLs with sent tokens
-    if (typeof XMLHttpRequest !== 'undefined') {
-        const origOpen = XMLHttpRequest.prototype.open;
-        XMLHttpRequest.prototype.open = function (method, url, ...rest) {
-            const urlStr = typeof url === 'string' ? url : (url ? url.toString() : '');
-            const targetUrl = shouldSuppress(urlStr, null) ? BLANK_PIXEL : url;
-            return origOpen.apply(this, [method, targetUrl, ...rest]);
-        };
-    }
+    // 8. REMOVED: XMLHttpRequest.prototype.open.
+    // Gmail does not load images through XHR either, and this substituted a data: URI as the
+    // REQUEST URL, which XHR cannot load -- so on the only path where it would ever have
+    // fired, it threw instead of suppressing anything.
     // 9. MutationObserver: Asynchronous DOM guard for any dynamic <img> injections
     function checkAndNeutralizeImage(img) {
         if (isComposeContext(img))
             return;
         const src = img.getAttribute('src') || img.src || '';
         if (shouldSuppress(src, img)) {
+            // Repointing src is what actually cancels the pending load: UpdateFromElement
+            // clears the queued task, and the task re-reads ImageSourceURL() when it runs.
+            //
+            // The former img.remove() here did nothing for suppression -- a detached image in
+            // an active document still loads -- while mutating Gmail's DOM out from under its
+            // renderer. The node is left in place and hidden instead.
             img.src = BLANK_PIXEL;
             img.setAttribute('src', BLANK_PIXEL);
             img.setAttribute('data-mailtrace-suppressed', 'true');
             img.style.display = 'none';
-            img.remove();
         }
     }
     const observer = new MutationObserver((mutations) => {
