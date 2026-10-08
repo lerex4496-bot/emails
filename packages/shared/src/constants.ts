@@ -45,9 +45,22 @@ export enum Classification {
   CONFIRMED_FIRST_PARTY = 'CONFIRMED_FIRST_PARTY',
 }
 
+/**
+ * User-Agent substrings that positively identify a non-human fetcher.
+ *
+ * Only signatures that real clients actually emit belong here. A signature that never
+ * matches is worse than no signature at all: it implies coverage that does not exist,
+ * and the traffic it was meant to catch falls through to the default verdict instead.
+ *
+ * Deliberately absent:
+ * - Apple Mail Privacy Protection. Its relay presents an ordinary Apple Mail User-Agent
+ *   and is only identifiable by Apple's IP ranges, so there is no substring to match.
+ *   The previous 'AppleMailProxy' entry matched nothing real -- the test that covered it
+ *   fabricated a UA by appending the literal to a stock Safari string. MPP traffic now
+ *   lands on the default (weakest) verdict, which is the correct fail-closed outcome.
+ * - Yahoo. The previous 'YahooMailProxy' entry was never referenced by any classifier.
+ */
 export const KNOWN_PROXY_SIGNATURES = {
   GOOGLE_IMAGE_PROXY: 'GoogleImageProxy',
-  APPLE_MPP: 'AppleMailProxy',
   OFFICE365_ATP: 'Microsoft Office',
-  YAHOO_CACHE: 'YahooMailProxy',
 } as const;
